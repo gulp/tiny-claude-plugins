@@ -61,19 +61,45 @@ inbound mail the moment it lands instead of discovering it on the next manual
   exits (code 3) rather than watching a nameless inbox. A failed *first* poll
   (server down / wrong identity / auth) likewise reports the cause and exits
   (code 4) instead of masquerading as a healthy-but-quiet watch.
+- **Product mode (cross-project bus).** Set `$AGENT_MAIL_PRODUCT` (or run the
+  `agent-mail product` command) and the watch aggregates one identity's mail
+  across *every* project linked into that product, labelling each line with its
+  origin project and advancing a `created_ts` frontier. `doctor` gains a
+  registration-gap check in this mode — it fails loud if your identity is missing
+  from any linked project (where its mail would silently never arrive).
 
-Requirements on `PATH`: the `am`
-([Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail_rust)) CLI and
-`jq`.
+Under the monitor sits a small read-only `agent-mail` CLI (Deno, ships as source —
+run via `deno task` or the plugin's monitor entrypoint): `watch` / `product` /
+`monitor` (the loops), `doctor` (preflight), and `capabilities` / `schema` (the
+machine-readable command + exit-code contract, emitted as versioned JSON
+envelopes). Requirements on `PATH`: the `am`
+([Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail_rust)) CLI,
+`deno`, and `jq`.
 
 Bundled skills (model-invoked, on demand — Claude shows them namespaced, e.g.
 `agent-mail-monitor:toggle`):
 
+- **`onboarding-to-agent-mail`** — zero-to-productive first run: declare the MCP
+  connection via `am setup`, verify with the `am agent` cockpit, register a
+  durable identity, then arm the watch. Idempotent and safe to re-run.
+- **`wiring-a-product-bus`** — wire N repos into one product bus: `am products
+  ensure` + `link` per repo, then register your identity in each (closing the
+  silent registration gap by construction). Explains `created_ts` aggregation.
 - **`toggle`** — turn the watch OFF (silence this session) or back ON without
   uninstalling. This is the per-session opt-out/opt-in control.
 - **`doctor`** — diagnose why the monitor is silent: checks `am`, `jq`, server
-  health (`curl` + `am health`), the MCP declaration, and `AGENT_NAME`, and points
-  at a fix guide for each failure.
+  health (`curl` + `am health`), the MCP declaration, `AGENT_NAME`, and (in
+  product mode) registration in every linked project.
+- **`driving-swarms-with-mail`** — the Agent Mail reservation-and-thread seam for
+  a shared checkout: reserve your edit surface, announce in a per-task thread,
+  release when your commit lands. Explicit-invocation only.
+
+Bundled agent:
+
+- **`mail-triage`** — a read-only advisor that reads an identity's inbox (single
+  project or product bus) and returns a ranked triage digest with routing and
+  priority recommendations. It *recommends*, it never acts: its tool allowlist
+  grants only read surfaces and excludes every send/reply/ack/mark-read mutator.
 
 ## Repository layout
 
@@ -83,7 +109,9 @@ plugins/<name>/
   .claude-plugin/plugin.json          # plugin manifest
   monitors/monitors.json              # experimental: background monitors (when: always → auto-arm)
   scripts/                            # the watch/entry scripts a monitor runs
+  src/                                # optional: a Deno CLI shipped as source (agent-mail's `agent-mail`)
   skills/<skill>/SKILL.md             # model-invoked skills (+ scripts/, resources/, assets/)
+  agents/<agent>.md                   # subagents (frontmatter tool-allowlist + system prompt)
 ```
 
 ## Publishing / release discipline

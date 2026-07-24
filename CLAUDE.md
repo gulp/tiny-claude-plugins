@@ -12,8 +12,16 @@ plugins/<name>/
   .claude-plugin/plugin.json         # plugin manifest (only `name` is required)
   monitors/monitors.json             # experimental background monitors (when:always → auto-arm)
   scripts/                           # the watch/entry scripts a monitor runs
+  src/                               # optional Deno CLI shipped as source (deno task / monitor entrypoint)
   skills/<skill>/SKILL.md            # model-invoked skills (auto-discovered)
+  agents/<agent>.md                  # subagents, auto-discovered (frontmatter tools allowlist + prompt)
 ```
+
+`agent-mail-monitor` has grown past a bare monitor: it ships a read-only `agent-mail`
+Deno CLI (`watch`/`product`/`monitor`/`doctor`/`capabilities`/`schema`), five skills,
+and a read-only `mail-triage` subagent. The CLI owns its own exit-code contract —
+read it from the source of truth rather than freezing it here: `deno task -q doctor`
+paths, or `… capabilities` / `… schema <command>` for the machine-readable envelope.
 
 ## Conventions
 
