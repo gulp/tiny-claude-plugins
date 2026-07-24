@@ -5,15 +5,24 @@ Each plugin does one thing well; nothing here is a framework.
 
 ## Install the marketplace
 
+Everything installs straight from the public GitHub remote — no clone, no local
+path. Two equivalent surfaces: the in-session `/plugin` slash commands, or the
+`claude plugin` CLI (which also works from a terminal or a setup script).
+
+```bash
+# CLI — works headless, from a terminal or CI
+claude plugin marketplace add gulp/tiny-claude-plugins --scope project
+claude plugin install agent-mail-monitor@tiny-claude-plugins --scope project
 ```
+
+```
+# or in-session, interactively
 /plugin marketplace add gulp/tiny-claude-plugins
-```
-
-Then install a plugin. Pick the **scope** that matches how widely you want it:
-
-```
 /plugin install agent-mail-monitor@tiny-claude-plugins
 ```
+
+Pick the **scope** that matches how widely you want it (`--scope` on the CLI; the
+slash command prompts):
 
 | Scope | Lands in | Active for | Use when |
 |---|---|---|---|
@@ -21,8 +30,8 @@ Then install a plugin. Pick the **scope** that matches how widely you want it:
 | **user** | `~/.claude/settings.json` | every session, everywhere | you always want it (a dedicated coordinator machine) |
 | **local** | `.claude/settings.local.json` (uncommitted) | just you, this repo | trying it out without committing anything |
 
-Pass the scope explicitly on install (`/plugin install <name>@tiny-claude-plugins`
-prompts, or use the `claude plugin install --scope <project|user|local>` CLI).
+Confirm what landed and at which scope with `claude plugin list` (it prints the
+resolved version + scope per plugin).
 
 **Just testing, no install?** Point Claude at the plugin dir for a single
 session — nothing persists:
