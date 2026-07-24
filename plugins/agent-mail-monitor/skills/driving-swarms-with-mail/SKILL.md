@@ -1,18 +1,24 @@
 ---
-name: coordinate
-description: Shared-tree multi-agent swarm discipline built on Agent Mail — reserve your edit surface before touching it, announce in a per-task thread, commit only your own paths, review committed state (never the mutable working tree) when verifying a peer's work, release the reservation, then close your task. Use when several agents share ONE working tree and ONE git index (not isolated worktrees); use when asked to "coordinate with other agents in this repo", "reserve files before editing", "commit only my changes", "avoid stepping on a peer's edits", "land my part of a swarm task", or "join a multi-agent swarm on this repo".
+name: driving-swarms-with-mail
+description: The Agent-Mail reservation-and-messaging seam for working a shared git checkout alongside other agents — reserve your edit surface as an Agent Mail file reservation before touching it, announce in a per-task Agent Mail thread, then release it when your commit lands. The load-bearing content is the Agent Mail flow; the surrounding git/tracker steps are generic swarm hygiene shown only so the loop reads end to end. Use when several agents share ONE working tree and ONE git index (not isolated worktrees) and coordinate through Agent Mail — e.g. "reserve files before editing", "announce my edit surface", "avoid stepping on a peer's edits", "release my file reservation", or "join an Agent Mail swarm on this repo".
 metadata:
   disable-model-invocation: "true"
 allowed-tools: Bash Read Write
 ---
 
-# Coordinate — shared-tree swarm discipline
+# Driving swarms with mail — the Agent Mail seam for a shared checkout
 
 Several agents can share ONE working tree and ONE git index instead of isolated
-worktrees. In that mode, filesystem isolation does not exist — coordination is
-**file reservations + messages + (optionally) build slots**, enforced entirely
-through the Agent Mail MCP server and social discipline, not through git
+worktrees. In that mode, filesystem isolation does not exist — the thing that
+keeps two agents off each other's files is an **Agent Mail file reservation**
+plus a **per-task Agent Mail thread**, backed by social discipline, not git
 branches or containers.
+
+That Agent Mail flow — reserve → announce → release — is what this skill owns.
+The git-commit and issue-tracker steps woven through the loop below are **generic
+swarm hygiene**, not Agent-Mail-specific; they are included only so the cycle
+reads end to end. Where your repo already documents its own commit/tracker
+conventions, those win — this skill does not restate them authoritatively.
 
 This skill is invoked **only on explicit request** (`disable-model-invocation`)
 because it walks through a state-mutating sequence — reservations, commits,
