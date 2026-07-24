@@ -1,0 +1,20 @@
+{
+  "name": "tiny-claude-plugins",
+  "owner": {
+    "name": "Yekta Gurel",
+    "email": "me@yektagurel.com"
+  },
+  "metadata": {
+    "description": "A small, curated marketplace of focused Claude Code plugins — each does one thing well."
+  },
+  "plugins": [
+    {
+      "name": "agent-mail-monitor",
+      "source": "./plugins/agent-mail-monitor",
+      "displayName": "Agent Mail Monitor",
+      "description": "Auto-arms a read-only background Monitor that notifies on each new Agent Mail message addressed to $AGENT_NAME — react to inbound swarm mail without polling.",
+      "category": "multi-agent",
+      "tags": ["agent-mail", "monitor", "swarm", "multi-agent"]
+    }
+  ]
+}

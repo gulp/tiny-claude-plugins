@@ -1,0 +1,8 @@
+[
+  {
+    "name": "agent-mail-inbox",
+    "description": "Emit a notification for each new Agent Mail message addressed to $AGENT_NAME in the current project. Read-only: polls `am check-inbox` (which does NOT mark messages read), so it never consumes mail from under a later fetch_inbox/acknowledge.",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/mail-monitor.sh",
+    "when": "always"
+  }
+]
