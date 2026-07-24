@@ -1,6 +1,6 @@
 {
   "name": "agent-mail-monitor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Auto-arm a read-only background Monitor that emits one notification per new Agent Mail message addressed to $AGENT_NAME, so a swarm agent reacts to inbound mail without polling.",
   "author": {
     "name": "Yekta Gurel",

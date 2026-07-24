@@ -1,0 +1,19 @@
+{
+  "//": "Agent Mail MCP server declaration for Claude Code — from the project README:",
+  "//2": "  https://github.com/Dicklesworthstone/mcp_agent_mail_rust",
+  "//3": "Paste the inner 'agent-mail' object under the 'mcpServers' key of your",
+  "//4": ".mcp.json (project) or ~/.claude/settings.json (user). Confirm host/port",
+  "//5": "against `am status --json` (.service.http_url) first. A stdio variant is",
+  "//6": "shown commented below for hosts that prefer launching the binary directly.",
+  "mcpServers": {
+    "agent-mail": {
+      "type": "url",
+      "url": "http://127.0.0.1:8765/mcp/"
+    },
+    "agent-mail-stdio-alternative": {
+      "//": "delete 'agent-mail' above and rename this to 'agent-mail' to use stdio",
+      "command": "mcp-agent-mail",
+      "args": []
+    }
+  }
+}

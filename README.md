@@ -9,10 +9,26 @@ Each plugin does one thing well; nothing here is a framework.
 /plugin marketplace add gulp/tiny-claude-plugins
 ```
 
-Then install any plugin (persistent — every session):
+Then install a plugin. Pick the **scope** that matches how widely you want it:
 
 ```
 /plugin install agent-mail-monitor@tiny-claude-plugins
+```
+
+| Scope | Lands in | Active for | Use when |
+|---|---|---|---|
+| **project** | the repo's `.claude/settings.json` (committed) | everyone who trusts this repo | a repo whose work is swarm/coordinator-y — opt the whole project in |
+| **user** | `~/.claude/settings.json` | every session, everywhere | you always want it (a dedicated coordinator machine) |
+| **local** | `.claude/settings.local.json` (uncommitted) | just you, this repo | trying it out without committing anything |
+
+Pass the scope explicitly on install (`/plugin install <name>@tiny-claude-plugins`
+prompts, or use the `claude plugin install --scope <project|user|local>` CLI).
+
+**Just testing, no install?** Point Claude at the plugin dir for a single
+session — nothing persists:
+
+```bash
+AGENT_NAME=You claude --plugin-dir plugins/agent-mail-monitor
 ```
 
 ## Plugins
@@ -20,57 +36,41 @@ Then install any plugin (persistent — every session):
 ### `agent-mail-monitor`
 
 Auto-arms a **read-only** background Monitor that fires one notification per new
-[Agent Mail](https://github.com/) message addressed to `$AGENT_NAME` in the
-current project — so a swarm agent reacts to inbound mail the moment it lands
-instead of discovering it on the next manual `fetch_inbox`.
+[Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail_rust) message
+addressed to `$AGENT_NAME` in the current project — so a swarm agent reacts to
+inbound mail the moment it lands instead of discovering it on the next manual
+`fetch_inbox`.
 
 - **Read-only by design.** It polls `am check-inbox` (which, unlike the MCP
   `fetch_inbox` tool, does *not* mark messages read), so watching never consumes
   mail out from under a later `fetch_inbox`/`acknowledge_message`.
-- **Zero model action to arm.** The monitor is declared with `when: "always"`,
-  so the host arms it at session start with no tool call — the same trust tier as
-  a hook (unsandboxed).
+- **Zero model action to arm.** The monitor is declared `when: "always"`, so the
+  host arms it at session start with no tool call — the same trust tier as a hook
+  (unsandboxed).
 - **Identity-scoped.** It watches `$AGENT_NAME`; set that at launch. Without an
   identity the monitor stays idle (it exits cleanly, not as a crash).
 
-Requirements on `PATH`: the `am` (Agent Mail) CLI and `jq`.
+Requirements on `PATH`: the `am`
+([Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail_rust)) CLI and
+`jq`.
 
-## Two ways to run a monitor
+Bundled skills (model-invoked, on demand):
 
-| | Persistent (marketplace install) | Sometimes (per-launch) |
-|---|---|---|
-| How | `/plugin install agent-mail-monitor@tiny-claude-plugins` | `cldy-mon` (see `bin/`) |
-| Scope | every session, until you uninstall | the one session you launch |
-| Good for | a dedicated coordinator terminal | occasional swarm work |
-
-### `cldy-mon` — the opt-in launcher
-
-`bin/cldy-mon` is a thin shim that execs `claude --plugin-dir <this-plugin>`, so
-the mail Monitor arms for **just that session** and disappears when it ends — no
-global install to remember to disable. This is the "I want monitor mode
-*sometimes*" path.
-
-```bash
-# from a clone of this repo:
-AGENT_NAME=PlumHare ./bin/cldy-mon              # arm mail-monitor for this session
-AGENT_NAME=PlumHare ./bin/cldy-mon --model opus # extra flags pass straight through
-
-# put it on PATH once:
-ln -s "$PWD/bin/cldy-mon" ~/.local/bin/cldy-mon
-```
-
-The monitor watches `$AGENT_NAME`; launch without it and the shim prints how to
-set one (the monitor then stays idle rather than watching a nameless inbox).
+- **`toggle-agent-mail-monitor`** — turn the watch OFF (silence this session) or
+  back ON without uninstalling. This is the per-session opt-out/opt-in control.
+- **`agent-mail-monitor-doctor`** — diagnose why the monitor is silent: checks
+  `am`, `jq`, server health (`curl` + `am health`), the MCP declaration, and
+  `AGENT_NAME`, and points at a fix guide for each failure.
 
 ## Repository layout
 
 ```
-.claude-plugin/marketplace.json     # marketplace manifest (what /plugin marketplace add reads)
+.claude-plugin/marketplace.json      # marketplace manifest (what /plugin marketplace add reads)
 plugins/<name>/
-  .claude-plugin/plugin.json         # plugin manifest
-  monitors/monitors.json             # experimental: background monitors (when: always → auto-arm)
-  scripts/                           # the actual watch/entry scripts
-bin/cldy-mon                         # per-launch opt-in launcher shim
+  .claude-plugin/plugin.json          # plugin manifest
+  monitors/monitors.json              # experimental: background monitors (when: always → auto-arm)
+  scripts/                            # the watch/entry scripts a monitor runs
+  skills/<skill>/SKILL.md             # model-invoked skills (+ scripts/, resources/, assets/)
 ```
 
 ## Publishing / release discipline
@@ -90,8 +90,8 @@ claude plugin validate .
 
 ## Roadmap
 
-`agent-mail-monitor` is the first plugin. The marketplace is built to grow —
-each addition is a self-contained `plugins/<name>/` dir plus one entry in
+`agent-mail-monitor` is the first plugin. The marketplace is built to grow — each
+addition is a self-contained `plugins/<name>/` dir plus one entry in
 `marketplace.json`. Candidate next plugins:
 
 - **swarm-status** — package `watch-swarm.sh` (bead-close + tagged-commit tail)
