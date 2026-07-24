@@ -12,26 +12,44 @@ stays installed either way, and it re-arms on the next session.
 
 ## Turn it OFF (silence this session)
 
-1. List active background tasks and find the one whose command runs
-   `mail-monitor.sh` (or `watch-mail.sh`) — its label is `agent-mail-inbox`.
+1. List active background tasks and find the one whose label is
+   `agent-mail-inbox` (its command runs `src/cli.ts monitor` via `deno`).
 2. Stop that task (`TaskStop <id>`). Notifications cease immediately. Nothing is
    uninstalled; the watch re-arms next session.
 
 ## Turn it ON (arm now)
 
-Arm the watch as a **persistent** background Monitor:
+Arm the watch as a **persistent** background Monitor, using the same command the
+plugin auto-arms at session start (`monitors/monitors.json`):
 
-- **command:** `"${CLAUDE_PLUGIN_ROOT}"/scripts/mail-monitor.sh`
+- **command:** `deno run --allow-run=am --allow-env --allow-read "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" monitor`
 - **persistent:** `true`
 
-The entrypoint reads `AGENT_NAME` (the identity to watch) and `CLAUDE_PROJECT_DIR`
-from the environment; it needs `am` and `jq` on `PATH`. With no `AGENT_NAME` the
-watch does **not** fail silently — it emits one loud notice on stdout and exits
-(code 3) rather than watching a nameless inbox. Set one at launch:
-`AGENT_NAME=YourName`. If the very first `am check-inbox` poll fails (server down,
-wrong identity, or auth), the watch reports the cause and exits (code 4) instead
-of masquerading as a healthy-but-quiet watch; run the `agent-mail-monitor:doctor`
-skill to diagnose.
+If you arm it by hand where `${CLAUDE_PLUGIN_ROOT}` isn't set, substitute the
+plugin's install directory for it.
+
+The `monitor` entrypoint reads `AGENT_NAME` (the identity to watch) and
+`CLAUDE_PROJECT_DIR` from the environment; it needs **`deno`** and **`am`** on
+`PATH` (it parses `am`'s JSON with Zod — no `jq`). With no `AGENT_NAME` the watch
+does **not** fail silently — it emits one loud notice on stdout and exits (code 3)
+rather than watching a nameless inbox. If the very first `am check-inbox` poll
+fails (server down, wrong identity, or auth), the watch reports the cause and exits
+(code 4) instead of masquerading as a healthy-but-quiet watch; run the
+`agent-mail-monitor:doctor` skill to diagnose.
+
+### Arm with an identity mid-session
+
+The auto-arm inherits whatever `AGENT_NAME` was in the environment at session
+start — so if you set or changed your identity mid-session, the running watch is
+still on the old name (or idle). A `export AGENT_NAME=…` from a later shell does
+**not** reach it. Re-arm with the identity baked into the command as a prefix
+(this sets it for the watch subprocess directly, regardless of session env):
+
+- **command:** `AGENT_NAME=YourName deno run --allow-run=am --allow-env --allow-read "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" monitor`
+- **persistent:** `true`
+
+Stop the existing `agent-mail-inbox` task first (see OFF above) so you don't run
+two watches against different identities.
 
 ## Notes
 
