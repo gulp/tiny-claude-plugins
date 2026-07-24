@@ -139,3 +139,144 @@ export async function pollInbox(
   const maxId = messages.reduce((m: number, msg: InboxMessage) => Math.max(m, msg.id), 0);
   return { ok: true, messages, maxId };
 }
+
+// --- product (multi-project) mode -------------------------------------------
+//
+// A product is a cross-project bus: `am products inbox <key> <agent>` aggregates
+// one agent's mail across every linked project. Two differences from single
+// check-inbox drive this whole branch:
+//   1. Watermark on `created_ts` (ISO string), NOT the numeric id — ids are only
+//      monotonic *within* a project, so across a product the max-id trick breaks.
+//      am returns messages newest-first, so messages[0].created_ts is the frontier.
+//   2. Each message must be LABELLED with its origin project. The payload carries
+//      a numeric `project_id`; we resolve it to a slug via `am list-projects`.
+
+const ProductMessageSchema = z
+  .object({
+    id: z.number(),
+    from: z.string().nullish(),
+    importance: z.string().nullish(),
+    subject: z.string().nullish(),
+    created_ts: z.string(), // ISO; the watermark key. Required — a message with
+    // no timestamp can't be ordered, so a missing one SHOULD fail the parse loudly.
+    project_id: z.number().nullish(),
+    project_slug: z.string().nullish(), // tolerate either labelling field
+  })
+  .passthrough();
+
+const ProductInboxSchema = z
+  .object({ messages: z.array(ProductMessageSchema).default([]) })
+  .passthrough();
+
+const ProjectSchema = z
+  .object({
+    id: z.number(),
+    slug: z.string().nullish(),
+    human_key: z.string().nullish(),
+  })
+  .passthrough();
+const ProjectListSchema = z.array(ProjectSchema);
+
+export type ProductMessage = z.infer<typeof ProductMessageSchema>;
+
+export interface ProductPollResult {
+  ok: boolean;
+  messages: ProductMessage[];
+  /** created_ts of the newest message (messages[0]); undefined if the page is empty. */
+  newestTs?: string;
+  /** true when the page came back full (>= limit) — a cap we must not hide. */
+  fullPage: boolean;
+  error?: string;
+}
+
+/** Parse an `am` payload that is either `{messages:[...]}` or a bare `[...]`. */
+function coerceInboxEnvelope(parsed: unknown): unknown {
+  return Array.isArray(parsed) ? { messages: parsed } : parsed;
+}
+
+/**
+ * One read-only product-inbox poll. `--since-ts` (when provided) asks am for
+ * messages strictly newer than the watermark; we still guard by created_ts in
+ * the caller. Read-only — like check-inbox it does not mark messages read.
+ */
+export async function productsInbox(
+  productKey: string,
+  agent: string,
+  sinceTs: string | undefined,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<ProductPollResult> {
+  const empty = (error: string): ProductPollResult => ({
+    ok: false,
+    messages: [],
+    fullPage: false,
+    error,
+  });
+
+  const args = ["products", "inbox", productKey, agent, "--limit", String(limit), "--json"];
+  if (sinceTs) args.push("--since-ts", sinceTs);
+
+  let res: AmResult;
+  try {
+    res = await runAm(args, { signal });
+  } catch (e) {
+    if (e instanceof AppError) return empty(e.message);
+    throw e;
+  }
+  if (res.code !== 0) return empty(res.stderr.trim() || `am exited ${res.code}`);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout);
+  } catch {
+    return empty("products inbox did not return JSON");
+  }
+  const check = ProductInboxSchema.safeParse(coerceInboxEnvelope(parsed));
+  if (!check.success) return empty(`unexpected products inbox shape: ${check.error.message}`);
+
+  const messages = check.data.messages;
+  return {
+    ok: true,
+    messages,
+    newestTs: messages[0]?.created_ts,
+    fullPage: messages.length >= limit,
+  };
+}
+
+/**
+ * project_id -> display label (slug, else human_key, else the numeric id).
+ * Returns { ok:false } on any failure so the caller can degrade to a "?" label
+ * rather than crash — a missing project map must never take the watch down.
+ */
+export async function listProjects(
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; map: Map<number, string>; error?: string }> {
+  const map = new Map<number, string>();
+
+  let res: AmResult;
+  try {
+    res = await runAm(["list-projects", "--json"], { signal });
+  } catch (e) {
+    if (e instanceof AppError) return { ok: false, map, error: e.message };
+    throw e;
+  }
+  if (res.code !== 0) {
+    return { ok: false, map, error: res.stderr.trim() || `am exited ${res.code}` };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, map, error: "list-projects did not return JSON" };
+  }
+  const check = ProjectListSchema.safeParse(parsed);
+  if (!check.success) {
+    return { ok: false, map, error: `unexpected list-projects shape: ${check.error.message}` };
+  }
+
+  for (const p of check.data) {
+    map.set(p.id, p.slug ?? p.human_key ?? String(p.id));
+  }
+  return { ok: true, map };
+}

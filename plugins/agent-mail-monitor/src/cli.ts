@@ -8,6 +8,7 @@
 
 import { Command, CommanderError, InvalidArgumentError } from "commander";
 import { runWatch } from "./commands/watch.ts";
+import { runProductWatch } from "./commands/product.ts";
 import { runDoctor } from "./commands/doctor.ts";
 import { AppError, ExitCode } from "./core/exit.ts";
 
@@ -40,11 +41,24 @@ function parseSince(v: string): number {
   if (!/^\d+$/.test(v)) throw new InvalidArgumentError("must be a non-negative integer");
   return Number(v);
 }
+function parseLimit(v: string): number {
+  if (!/^\d+$/.test(v) || Number(v) < 1) {
+    throw new InvalidArgumentError("must be a positive integer (>= 1)");
+  }
+  return Number(v);
+}
 
 interface WatchCmdOpts {
   agent: string;
   project?: string;
   since?: number;
+  interval: number;
+}
+
+interface ProductCmdOpts {
+  agent: string;
+  product?: string;
+  limit: number;
   interval: number;
 }
 
@@ -67,7 +81,11 @@ function buildProgram(): Command {
     .description("Emit one stdout line per NEW message for --agent (read-only).")
     .requiredOption("--agent <name>", "Agent Mail identity to watch")
     .option("--project <path>", "project key (default: --cwd or $PWD)")
-    .option("--since <id>", "emit messages with id > ID (replays existing above ID once)", parseSince)
+    .option(
+      "--since <id>",
+      "emit messages with id > ID (replays existing above ID once)",
+      parseSince,
+    )
     .option("--interval <sec>", "seconds between polls (>= 1)", parseInterval, 30)
     .action(async (opts: WatchCmdOpts) => {
       const g = program.opts();
@@ -81,12 +99,43 @@ function buildProgram(): Command {
       Deno.exit(code);
     });
 
+  // product — cross-project bus watch. Frontier is created_ts, lines are labelled
+  // with their origin project. Product key from --product or $AGENT_MAIL_PRODUCT.
+  program
+    .command("product")
+    .description(
+      "Emit one stdout line per NEW message for --agent across a product bus (read-only).",
+    )
+    .requiredOption("--agent <name>", "Agent Mail identity to watch")
+    .option("--product <key>", "product key (default: $AGENT_MAIL_PRODUCT)")
+    .option("--limit <n>", "messages fetched per poll (>= 1)", parseLimit, 200)
+    .option("--interval <sec>", "seconds between polls (>= 1)", parseInterval, 30)
+    .action(async (opts: ProductCmdOpts) => {
+      const productKey = opts.product ?? Deno.env.get("AGENT_MAIL_PRODUCT") ?? "";
+      if (!productKey) {
+        console.error(
+          "agent-mail: product mode needs a product key — pass --product <key> or set $AGENT_MAIL_PRODUCT.",
+        );
+        Deno.exit(ExitCode.USAGE);
+      }
+      const code = await runProductWatch({
+        productKey,
+        agent: opts.agent,
+        interval: opts.interval,
+        limit: opts.limit,
+        signal: shutdown.signal,
+      });
+      Deno.exit(code);
+    });
+
   // monitor — the Monitor entrypoint (replaces mail-monitor.sh). Reads identity
   // from the ENV because the Monitor host only substitutes its own allowlisted
   // vars into the command string, not arbitrary ones like $AGENT_NAME.
   program
     .command("monitor")
-    .description("Monitor entrypoint: read AGENT_NAME / CLAUDE_PROJECT_DIR / MAIL_POLL_INTERVAL from env, then watch.")
+    .description(
+      "Monitor entrypoint: read AGENT_NAME / CLAUDE_PROJECT_DIR / MAIL_POLL_INTERVAL from env, then watch.",
+    )
     .action(async () => {
       const g = program.opts();
       const agent = Deno.env.get("AGENT_NAME") ?? "";
@@ -107,18 +156,29 @@ function buildProgram(): Command {
         );
         Deno.exit(ExitCode.USAGE);
       }
-      const code = await runWatch({
-        agent,
-        project: resolveProject(undefined, g.cwd),
-        interval: Number(rawInterval),
-        signal: shutdown.signal,
-      });
+      // $AGENT_MAIL_PRODUCT set -> watch the cross-project bus; else single project.
+      const product = Deno.env.get("AGENT_MAIL_PRODUCT");
+      const code = product
+        ? await runProductWatch({
+          productKey: product,
+          agent,
+          interval: Number(rawInterval),
+          signal: shutdown.signal,
+        })
+        : await runWatch({
+          agent,
+          project: resolveProject(undefined, g.cwd),
+          interval: Number(rawInterval),
+          signal: shutdown.signal,
+        });
       Deno.exit(code);
     });
 
   program
     .command("doctor")
-    .description("Read-only preflight: deno + am presence, identity (full check set in a later release).")
+    .description(
+      "Read-only preflight: deno + am presence, identity (full check set in a later release).",
+    )
     .action(async () => {
       const g = program.opts();
       const code = await runDoctor({ json: Boolean(g.json) || g.output === "json" });

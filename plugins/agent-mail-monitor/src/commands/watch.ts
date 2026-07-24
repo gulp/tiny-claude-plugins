@@ -9,6 +9,7 @@
 
 import { type InboxMessage, pollInbox, type PollResult } from "../core/am.ts";
 import { AppError, ExitCode } from "../core/exit.ts";
+import { sleep } from "../core/sleep.ts";
 
 export interface WatchOptions {
   agent: string;
@@ -24,19 +25,9 @@ export interface WatchOptions {
 const FAIL_WARN_THRESHOLD = 3; // consecutive transient failures before one warning
 
 function formatLine(m: InboxMessage): string {
-  return `MAIL #${m.id} from ${m.from ?? "?"} [${m.importance ?? "?"}]: ${m.subject ?? "(no subject)"}`;
-}
-
-/** setTimeout that also resolves the moment `signal` aborts (no dangling timer). */
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) return resolve();
-    const t = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(t);
-      resolve();
-    }, { once: true });
-  });
+  return `MAIL #${m.id} from ${m.from ?? "?"} [${m.importance ?? "?"}]: ${
+    m.subject ?? "(no subject)"
+  }`;
 }
 
 /**
