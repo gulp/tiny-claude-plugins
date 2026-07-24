@@ -34,12 +34,29 @@ plugins/<name>/
   Resolve anything else (e.g. `$AGENT_NAME`) inside the script, in a real shell.
 - **Scripts** are POSIX-ish bash, `chmod +x`, and fail loud (non-zero exit with a
   one-line reason) rather than silently — a monitor that dies quietly reads as
-  "nothing to report."
+  "nothing to report." A **Monitor turns only STDOUT into notifications** (stderr
+  is swallowed, exit 0 = clean end), so a monitor-facing script must print its
+  fatal diagnostics to **stdout** and exit non-zero — a stderr-only + exit-0 path
+  is a silent no-op the host cannot see.
+- **Distinct exit codes per failure class, documented in `--help`.** So an agent
+  invoking a script can branch on the cause without scraping text. Convention in
+  this repo: `2` = bad arguments, `3` = missing required identity/env, `4` =
+  first/initial poll failed (unreachable / wrong identity / auth), `64` = usage
+  error (doctor), `127` = a required dependency is missing. Keep the `--help`
+  exit-code list in sync with the code.
 
 ## Before every push
 
 ```
 claude plugin validate .
+```
+
+Run a plugin's script tests (a plugin may ship a `tests/` dir of self-contained
+bash tests — they stub externals like `am` on `PATH` and use real `jq`; they SKIP
+rather than fail when a tool such as `timeout`/`jq` is absent):
+
+```
+plugins/<name>/tests/test-watch-mail.sh
 ```
 
 Test a plugin locally without installing it (session-only):

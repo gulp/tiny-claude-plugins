@@ -1,7 +1,9 @@
 # Fix: set `AGENT_NAME` so the monitor has an identity to watch
 
 The monitor watches the inbox for **one agent identity**. With no `AGENT_NAME`
-(or `AGENT_MAIL_AGENT`) it arms but stays idle by design — it won't guess.
+(or `AGENT_MAIL_AGENT`) it won't guess — instead of silently watching a nameless
+inbox, it emits one loud notice on stdout and exits (code 3) so the
+misconfiguration is visible rather than a quiet no-op.
 
 ## Set it for the session (the durable way)
 
@@ -35,4 +37,4 @@ the identity so each pane shows its own name in the statusline.
 echo "$AGENT_NAME"   # non-empty
 ```
 
-Then relaunch `claude` (or re-arm via the `toggle-agent-mail-monitor` skill).
+Then relaunch `claude` (or re-arm via the `agent-mail-monitor:toggle` skill).

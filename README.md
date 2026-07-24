@@ -48,19 +48,23 @@ inbound mail the moment it lands instead of discovering it on the next manual
   host arms it at session start with no tool call — the same trust tier as a hook
   (unsandboxed).
 - **Identity-scoped.** It watches `$AGENT_NAME`; set that at launch. Without an
-  identity the monitor stays idle (it exits cleanly, not as a crash).
+  identity the monitor does **not** fail silently — it emits one loud notice and
+  exits (code 3) rather than watching a nameless inbox. A failed *first* poll
+  (server down / wrong identity / auth) likewise reports the cause and exits
+  (code 4) instead of masquerading as a healthy-but-quiet watch.
 
 Requirements on `PATH`: the `am`
 ([Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail_rust)) CLI and
 `jq`.
 
-Bundled skills (model-invoked, on demand):
+Bundled skills (model-invoked, on demand — Claude shows them namespaced, e.g.
+`agent-mail-monitor:toggle`):
 
-- **`toggle-agent-mail-monitor`** — turn the watch OFF (silence this session) or
-  back ON without uninstalling. This is the per-session opt-out/opt-in control.
-- **`agent-mail-monitor-doctor`** — diagnose why the monitor is silent: checks
-  `am`, `jq`, server health (`curl` + `am health`), the MCP declaration, and
-  `AGENT_NAME`, and points at a fix guide for each failure.
+- **`toggle`** — turn the watch OFF (silence this session) or back ON without
+  uninstalling. This is the per-session opt-out/opt-in control.
+- **`doctor`** — diagnose why the monitor is silent: checks `am`, `jq`, server
+  health (`curl` + `am health`), the MCP declaration, and `AGENT_NAME`, and points
+  at a fix guide for each failure.
 
 ## Repository layout
 

@@ -1,5 +1,5 @@
 ---
-name: toggle-agent-mail-monitor
+name: toggle
 description: Turn the Agent Mail background monitor ON or OFF for the current session — arm or silence the read-only watch that notifies on each new Agent Mail message addressed to $AGENT_NAME. Use when asked to "silence/stop the mail monitor", "stop mail notifications", "start watching my inbox", "arm the agent-mail monitor", or when mail pings are unwanted (or wanted) this session without uninstalling the plugin.
 ---
 
@@ -26,8 +26,12 @@ Arm the watch as a **persistent** background Monitor:
 
 The entrypoint reads `AGENT_NAME` (the identity to watch) and `CLAUDE_PROJECT_DIR`
 from the environment; it needs `am` and `jq` on `PATH`. With no `AGENT_NAME` the
-watch stays idle by design (it exits cleanly rather than watching a nameless
-inbox) — set one at launch: `AGENT_NAME=YourName`.
+watch does **not** fail silently — it emits one loud notice on stdout and exits
+(code 3) rather than watching a nameless inbox. Set one at launch:
+`AGENT_NAME=YourName`. If the very first `am check-inbox` poll fails (server down,
+wrong identity, or auth), the watch reports the cause and exits (code 4) instead
+of masquerading as a healthy-but-quiet watch; run the `agent-mail-monitor:doctor`
+skill to diagnose.
 
 ## Notes
 
