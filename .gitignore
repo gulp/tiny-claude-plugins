@@ -4,3 +4,6 @@
 .DS_Store
 
 # nothing here is built; plugins are shipped as source
+
+# bv (beads viewer) local config and caches
+.bv/
