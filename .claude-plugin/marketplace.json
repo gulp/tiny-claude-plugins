@@ -11,8 +11,8 @@
     {
       "name": "agent-mail-monitor",
       "source": "./plugins/agent-mail-monitor",
-      "displayName": "Agent Mail Monitor",
-      "description": "Auto-arms a read-only background Monitor that notifies on each new Agent Mail message addressed to $AGENT_NAME — react to inbound swarm mail without polling.",
+      "displayName": "Agent Mail",
+      "description": "Read-only Agent Mail surface for swarm agents: auto-arms a background Monitor that notifies on each new message addressed to $AGENT_NAME, plus skills to toggle the watch and diagnose the setup — react to inbound mail without polling, and never mark it read.",
       "category": "multi-agent",
       "tags": ["agent-mail", "monitor", "swarm", "multi-agent"]
     }
