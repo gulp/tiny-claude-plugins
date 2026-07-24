@@ -23,10 +23,13 @@ export interface OkEnvelope<T> {
   meta: EnvelopeMeta;
 }
 
-export interface ErrEnvelope {
+export interface ErrEnvelope<T = unknown> {
   schemaVersion: number;
   ok: false;
   error: { code: number; name: string; message: string };
+  /** Optional partial payload alongside the error — e.g. doctor's full check set
+   *  is exactly what a caller wants to see WHEN doctor fails, not only on success. */
+  data?: T;
   meta: EnvelopeMeta;
 }
 
@@ -40,17 +43,19 @@ export function ok<T>(
   return { schemaVersion: SCHEMA_VERSION, ok: true, data, meta: { command, ...meta } };
 }
 
-export function err(
+export function err<T>(
   command: string,
   code: number,
   name: string,
   message: string,
+  data?: T,
   meta: Record<string, unknown> = {},
-): ErrEnvelope {
+): ErrEnvelope<T> {
   return {
     schemaVersion: SCHEMA_VERSION,
     ok: false,
     error: { code, name, message },
+    ...(data === undefined ? {} : { data }),
     meta: { command, ...meta },
   };
 }

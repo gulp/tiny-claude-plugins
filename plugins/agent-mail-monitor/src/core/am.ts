@@ -280,3 +280,137 @@ export async function listProjects(
   }
   return { ok: true, map };
 }
+
+// --- doctor: product registration-gap introspection -------------------------
+//
+// The registration-gap check answers: "is my identity registered in EVERY
+// project linked into this product?" A missing registration means the product
+// watch's first poll would fail for that project. Two am reads drive it:
+//   - `am products status <key> --json`  -> the set of linked projects
+//   - `am agents list --project <p> --json` -> the identities in one project
+//
+// SHAPE NOTE (honest): no product exists in this deployment to observe the
+// `products status --json` success body live, and `am products status <bogus>`
+// HANGS rather than erroring — so both the shape below and every call here are
+// defensive: we parse the linked-project list TOLERANTLY (several plausible
+// container keys, or a bare array) and, crucially, fail LOUD if we can't find a
+// project list at all, rather than silently reporting "no gaps". Every call is
+// timeout-bounded by the caller's signal so a hanging `am` can't wedge doctor.
+
+/** A linked project as seen in `products status`; any one identifier may be absent. */
+const LinkedProjectSchema = z
+  .object({
+    id: z.number().nullish(),
+    slug: z.string().nullish(),
+    human_key: z.string().nullish(),
+  })
+  .passthrough();
+
+export interface LinkedProject {
+  /** Best identifier to pass to `am agents list --project` (slug > human_key > id). */
+  key: string;
+  /** Human-facing label (same precedence as key). */
+  label: string;
+}
+
+/** `am agents list` row — only the identity name matters for the gap check. */
+const AgentRowSchema = z.object({ name: z.string().nullish() }).passthrough();
+const AgentListSchema = z.array(AgentRowSchema);
+
+/**
+ * Pull the linked-project array out of a tolerant `products status` body: a bare
+ * array, or an object carrying one under `projects` / `linked_projects` /
+ * `links`. Returns null when no project array is found (→ caller fails loud).
+ */
+function extractLinkedProjects(parsed: unknown): LinkedProject[] | null {
+  const arr = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object"
+    ? ((parsed as Record<string, unknown>).projects ??
+      (parsed as Record<string, unknown>).linked_projects ??
+      (parsed as Record<string, unknown>).links)
+    : undefined;
+  if (!Array.isArray(arr)) return null;
+
+  const out: LinkedProject[] = [];
+  for (const raw of arr) {
+    const p = LinkedProjectSchema.safeParse(raw);
+    if (!p.success) continue;
+    const key = p.data.slug ?? p.data.human_key ?? (p.data.id != null ? String(p.data.id) : null);
+    if (key == null) continue; // no queryable identifier — cannot check this one
+    out.push({ key, label: key });
+  }
+  return out;
+}
+
+/**
+ * Linked projects for a product. `{ ok:false }` (loud) on any am failure, a
+ * non-JSON/unrecognized body, or an empty/unparseable project list — never a
+ * silent empty success that would read as "no gaps". Never throws.
+ */
+export async function productStatusProjects(
+  productKey: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; projects: LinkedProject[]; error?: string }> {
+  let res: AmResult;
+  try {
+    res = await runAm(["products", "status", productKey, "--json"], { signal });
+  } catch (e) {
+    return { ok: false, projects: [], error: amErrorMessage(e) };
+  }
+  if (res.code !== 0) {
+    return { ok: false, projects: [], error: res.stderr.trim() || `am exited ${res.code}` };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, projects: [], error: "products status did not return JSON" };
+  }
+  const projects = extractLinkedProjects(parsed);
+  if (projects === null) {
+    return { ok: false, projects: [], error: "products status: no linked-project list in payload" };
+  }
+  return { ok: true, projects };
+}
+
+/**
+ * Registered identity names in one project. `{ ok:false }` (loud) on any am
+ * failure or a non-JSON/unexpected body. Never throws.
+ */
+export async function agentsInProject(
+  projectKey: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; names: string[]; error?: string }> {
+  let res: AmResult;
+  try {
+    res = await runAm(["agents", "list", "--project", projectKey, "--json"], { signal });
+  } catch (e) {
+    return { ok: false, names: [], error: amErrorMessage(e) };
+  }
+  if (res.code !== 0) {
+    return { ok: false, names: [], error: res.stderr.trim() || `am exited ${res.code}` };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, names: [], error: "agents list did not return JSON" };
+  }
+  const check = AgentListSchema.safeParse(parsed);
+  if (!check.success) {
+    return { ok: false, names: [], error: `unexpected agents list shape: ${check.error.message}` };
+  }
+  const names = check.data.map((a) => a.name).filter((n): n is string => typeof n === "string");
+  return { ok: true, names };
+}
+
+/** Normalize a caught am error (AppError, abort/timeout, or anything) to a string. */
+function amErrorMessage(e: unknown): string {
+  if (e instanceof AppError) return e.message;
+  if (e instanceof DOMException && e.name === "AbortError") return "am call timed out";
+  if (e instanceof Error && e.name === "AbortError") return "am call timed out";
+  return e instanceof Error ? e.message : String(e);
+}

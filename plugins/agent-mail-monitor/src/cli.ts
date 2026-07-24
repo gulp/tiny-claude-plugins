@@ -10,6 +10,7 @@ import { Command, CommanderError, InvalidArgumentError } from "commander";
 import { runWatch } from "./commands/watch.ts";
 import { runProductWatch } from "./commands/product.ts";
 import { runDoctor } from "./commands/doctor.ts";
+import { runCapabilities, runSchema } from "./commands/introspect.ts";
 import { AppError, ExitCode } from "./core/exit.ts";
 
 // --- graceful shutdown: one AbortController kills the `am` child AND ends the
@@ -177,12 +178,34 @@ function buildProgram(): Command {
   program
     .command("doctor")
     .description(
-      "Read-only preflight: deno + am presence, identity (full check set in a later release).",
+      "Read-only preflight: deno + am presence, identity, and (in product mode) registration in every linked project.",
     )
     .action(async () => {
       const g = program.opts();
       const code = await runDoctor({ json: Boolean(g.json) || g.output === "json" });
       Deno.exit(code);
+    });
+
+  // capabilities — describe the command surface + exit-code contract (envelope).
+  program
+    .command("capabilities")
+    .description(
+      "Emit the command surface, exit-code contract, and active mode as a JSON envelope.",
+    )
+    .action(async () => {
+      Deno.exit(await runCapabilities());
+    });
+
+  // schema <command> — emit the JSON Schema for a command's --json envelope.
+  program
+    .command("schema")
+    .argument(
+      "<command>",
+      "command whose --json envelope schema to emit (doctor|capabilities|schema)",
+    )
+    .description("Emit the JSON Schema for a command's --json envelope.")
+    .action((command: string) => {
+      Deno.exit(runSchema(command));
     });
 
   return program;
