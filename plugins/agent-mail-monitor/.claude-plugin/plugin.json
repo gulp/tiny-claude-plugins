@@ -1,6 +1,6 @@
 {
   "name": "agent-mail-monitor",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Read-only Agent Mail surface for swarm agents: auto-arms a background Monitor that notifies on each new message addressed to $AGENT_NAME, plus skills for toggling the watch and diagnosing the setup. Never marks mail read.",
   "author": {
     "name": "Yekta Gurel",
