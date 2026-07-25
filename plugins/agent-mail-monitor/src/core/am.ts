@@ -215,6 +215,109 @@ export async function listProjects(
   return { ok: true, map };
 }
 
+// --- cross-project message lookup (tcp-p0x.1) -------------------------------
+//
+// Agent Mail message ids are globally unique, but the read path is project-scoped
+// (`am robot message <id>` falls back to CWD and 404s against the wrong project).
+// The `message` command wraps a bounded fan-out: enumerate candidate projects,
+// then probe each with `am robot message <id> --project <p>` until one resolves.
+
+/** One row of `am robot projects --json` — only slug/path are used to fan out. */
+const RobotProjectSchema = z
+  .object({ slug: z.string().nullish(), path: z.string().nullish() })
+  .passthrough();
+// `am robot projects` wraps the array under `projects`; tolerate a bare array too.
+const RobotProjectsSchema = z
+  .object({ projects: z.array(RobotProjectSchema).default([]) })
+  .passthrough();
+
+/**
+ * Candidate projects to search, newest-agnostic. `{ ok:false }` (loud) on any am
+ * failure or an unrecognized body — never a silent empty success that would read
+ * as "no projects, so not found". Never throws except AM_MISSING (am gone
+ * entirely is fatal, surfaced by the caller). Each candidate's `key` is the slug
+ * (preferred, what `--project` wants) else the path.
+ */
+export async function robotProjects(
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; projects: LinkedProject[]; error?: string }> {
+  let res: AmResult;
+  try {
+    res = await runAm(["robot", "projects", "--json"], { signal });
+  } catch (e) {
+    if (e instanceof AppError && e.code === ExitCode.AM_MISSING) throw e;
+    return { ok: false, projects: [], error: amErrorMessage(e) };
+  }
+  if (res.code !== 0) {
+    return { ok: false, projects: [], error: res.stderr.trim() || `am exited ${res.code}` };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, projects: [], error: "robot projects did not return JSON" };
+  }
+  const check = RobotProjectsSchema.safeParse(
+    Array.isArray(parsed) ? { projects: parsed } : parsed,
+  );
+  if (!check.success) {
+    return {
+      ok: false,
+      projects: [],
+      error: `unexpected robot projects shape: ${check.error.message}`,
+    };
+  }
+
+  const out: LinkedProject[] = [];
+  for (const p of check.data.projects) {
+    const key = p.slug ?? p.path;
+    if (key == null) continue; // no queryable identifier — cannot probe this one
+    out.push({ key, label: p.slug ?? p.path ?? key });
+  }
+  return { ok: true, projects: out };
+}
+
+/** Outcome of probing ONE project for a message id. `absent` = a clean 404 in
+ *  that project (keep looking); `error` = the project could not be queried at all
+ *  (a server/parse failure — surfaced so a miss is never a silent false negative). */
+export type MessageProbe =
+  | { kind: "hit"; message: unknown }
+  | { kind: "absent" }
+  | { kind: "error"; error: string };
+
+/**
+ * Probe a single project for `id` via `am robot message <id> --project <key>`,
+ * read-only. exit 0 + JSON → hit; a non-zero exit whose stderr says "not found"
+ * → absent; anything else (non-JSON body, other non-zero exit, timeout) → error.
+ * Throws only AM_MISSING (fatal). Never marks the message read (a robot view).
+ */
+export async function robotMessage(
+  id: string,
+  projectKey: string,
+  signal?: AbortSignal,
+): Promise<MessageProbe> {
+  let res: AmResult;
+  try {
+    res = await runAm(["robot", "message", id, "--project", projectKey, "--json"], { signal });
+  } catch (e) {
+    if (e instanceof AppError && e.code === ExitCode.AM_MISSING) throw e;
+    return { kind: "error", error: amErrorMessage(e) };
+  }
+  if (res.code !== 0) {
+    const stderr = res.stderr.trim();
+    if (/not found/i.test(stderr)) return { kind: "absent" };
+    return { kind: "error", error: stderr || `am exited ${res.code}` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout);
+  } catch {
+    return { kind: "error", error: "robot message did not return JSON" };
+  }
+  return { kind: "hit", message: parsed };
+}
+
 // --- doctor: product registration-gap introspection -------------------------
 //
 // The registration-gap check answers: "is my identity registered in EVERY

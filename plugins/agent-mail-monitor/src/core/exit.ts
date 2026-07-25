@@ -9,6 +9,12 @@
 export const ExitCode = {
   /** Clean success, or `--help`/`--version` printed. */
   OK: 0,
+  /** A query ran cleanly but the requested resource does not exist — e.g.
+   *  `message <id>` resolved across every candidate project and found no match.
+   *  A NEGATIVE RESULT, not an error: distinct from USAGE (bad invocation) and
+   *  SERVER_UNREACHABLE (could not query). Follows the grep/test convention that
+   *  exit 1 means "ran fine, answer is no". */
+  NOT_FOUND: 1,
   /** Bad invocation: unknown flag/arg, or a non-integer interval/since. */
   USAGE: 2,
   /** AGENT_NAME unset — no inbox to watch. Idle, but LOUD (never a silent no-op). */

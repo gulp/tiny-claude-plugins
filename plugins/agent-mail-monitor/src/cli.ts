@@ -11,6 +11,7 @@ import { resolveScopeSlugs, runWatch } from "./commands/watch.ts";
 import { runProductWatch } from "./commands/product.ts";
 import { resolveSlugs, runShadow } from "./commands/shadow.ts";
 import { runDoctor } from "./commands/doctor.ts";
+import { runMessage } from "./commands/message.ts";
 import { runCapabilities, runSchema } from "./commands/introspect.ts";
 import {
   defaultMailboxRoot,
@@ -314,12 +315,33 @@ function buildProgram(): Command {
       Deno.exit(await runCapabilities());
     });
 
+  // message <id> — resolve a globally-unique message id across projects in one
+  // read-only command (tcp-p0x.1). Human block by default; --json/--output json
+  // emits the versioned envelope. --product scopes the fan-out to a product bus.
+  program
+    .command("message")
+    .argument("<id>", "globally-unique Agent Mail message id to resolve")
+    .description(
+      "Resolve a message id across projects and print it (read-only; --product scopes to a product bus).",
+    )
+    .option("--product <key>", "scope the search to a product bus (default: $AGENT_MAIL_PRODUCT)")
+    .action(async (id: string, opts: { product?: string }) => {
+      const g = program.opts();
+      const code = await runMessage({
+        id,
+        product: opts.product ?? Deno.env.get("AGENT_MAIL_PRODUCT") ?? undefined,
+        json: Boolean(g.json) || g.output === "json",
+        signal: shutdown.signal,
+      });
+      Deno.exit(code);
+    });
+
   // schema <command> — emit the JSON Schema for a command's --json envelope.
   program
     .command("schema")
     .argument(
       "<command>",
-      "command whose --json envelope schema to emit (doctor|capabilities|schema)",
+      "command whose --json envelope schema to emit (doctor|message|capabilities|schema)",
     )
     .description("Emit the JSON Schema for a command's --json envelope.")
     .action((command: string) => {

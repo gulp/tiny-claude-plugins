@@ -28,12 +28,17 @@ const COMMANDS = [
     summary: "read-only preflight incl. product registration-gap",
     mode: "envelope",
   },
+  {
+    name: "message",
+    summary: "resolve a message id across projects (read-only query)",
+    mode: "envelope",
+  },
   { name: "capabilities", summary: "this command surface", mode: "envelope" },
   { name: "schema", summary: "JSON Schema for a command's --json envelope", mode: "envelope" },
 ] as const;
 
 export type SchemaTarget = (typeof COMMANDS)[number]["name"];
-const ENVELOPE_COMMANDS = new Set(["doctor", "capabilities", "schema"]);
+const ENVELOPE_COMMANDS = new Set(["doctor", "message", "capabilities", "schema"]);
 
 export async function runCapabilities(): Promise<number> {
   printEnvelope(
