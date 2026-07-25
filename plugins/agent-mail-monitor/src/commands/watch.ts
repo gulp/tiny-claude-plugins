@@ -3,8 +3,10 @@
 // tcp-p0x.16.1: promoted off `check-inbox` (SQLite, consumes on every poll) onto
 // the durable git-mailbox on disk via `snapshotMailbox` (../core/mailbox.ts).
 // OS file reads never mark mail read, so this backend is GENUINELY read-only —
-// unlike the check-inbox path it replaces (see ../core/am.ts `pollInbox`, still
-// used by the shadow prototype's cross-poll only).
+// unlike the check-inbox path it replaces. tcp-p0x.16.4 retired `pollInbox`
+// (../core/am.ts) entirely: no notification path shells out to check-inbox
+// anymore, including the shadow prototype's cross-check (now a direct
+// read-only `node:sqlite` open — see ../commands/shadow.ts).
 //
 // tcp-p0x.16.2: the loop itself now tails an arbitrary SET of project slugs
 // (`WatchOptions.slugs`), not exactly one — `resolveScopeSlugs` below is how a

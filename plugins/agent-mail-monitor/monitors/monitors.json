@@ -1,7 +1,7 @@
 [
   {
     "name": "agent-mail-inbox",
-    "description": "Emit a notification for each new Agent Mail message addressed to $AGENT_NAME in the current project. NOTE: the current backend polls `am check-inbox`, which CONSUMES (marks read) whenever the am daemon is up — without `--direct` it routes through the server's fetch_inbox. Treat the notification as the delivery; do not rely on a later fetch_inbox(unread_only) to re-surface a notified message. A genuinely non-consuming FS-tail backend is tracked in the plugin beads.",
+    "description": "Emit a notification for each new Agent Mail message addressed to $AGENT_NAME in the current project (or across $MAIL_WATCH_SCOPE / $AGENT_MAIL_PRODUCT, when set). Genuinely non-consuming: it tails the durable git-mailbox on disk (or the product bus in product mode) — plain OS file/DB reads that never mark mail read. `am check-inbox`, the one consuming path, has been retired from this notification path entirely (tcp-p0x.16.4). Still treat the notification as the delivery: it is the first surfacing of that mail, not a re-fetchable unread flag.",
     "command": "deno run --allow-run=am --allow-env --allow-read \"${CLAUDE_PLUGIN_ROOT}/src/cli.ts\" monitor",
     "when": "always"
   }

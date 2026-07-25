@@ -106,7 +106,7 @@ function buildProgram(): Command {
   program
     .name("agent-mail")
     .description(
-      "Watch/monitor + query wrapper over the Agent Mail `am` CLI. NOTE: watch/monitor (single project) and product tail non-consuming backends (the on-disk git-mailbox / the product bus) — only the shadow prototype's check-inbox cross-poll consumes (marks mail read).",
+      "Watch/monitor + query wrapper over the Agent Mail `am` CLI. All commands are genuinely non-consuming: watch/monitor (single project) and shadow tail the on-disk git-mailbox, product tails the product bus, and shadow's SQLite cross-check opens the store read-only — none marks mail read. `am check-inbox`, the one consuming path, has been retired from every notification path (tcp-p0x.16.4).",
     )
     .option("--json", "emit versioned JSON envelopes for query/introspection commands", false)
     .option("--output <fmt>", "output format for query commands (json|human)", "human")
@@ -173,19 +173,21 @@ function buildProgram(): Command {
       Deno.exit(code);
     });
 
-  // shadow — PROTOTYPE. Tail the durable git-mailbox (canonical, SQLite-free) and
-  // cross-check check-inbox: emit new canonical mail AND a loud DIVERGENCE line for
-  // any canonical message check-inbox never corroborates. Read-only. Arm next to
-  // the normal watch to see whether the filesystem store catches what SQLite drops.
+  // shadow — PROTOTYPE. Tail the durable git-mailbox (canonical) and cross-check
+  // it against a direct, genuinely-read-only `node:sqlite` open (tcp-p0x.16.5;
+  // no `am`/check-inbox call involved): emit new canonical mail AND a loud
+  // DIVERGENCE line for any canonical message SQLite never corroborates. Arm
+  // next to the normal watch to see whether the filesystem store catches what
+  // SQLite drops.
   program
     .command("shadow")
     .description(
-      "PROTOTYPE: tail the durable git-mailbox and flag mail check-inbox drops (read-only).",
+      "PROTOTYPE: tail the durable git-mailbox and flag mail SQLite hasn't caught up on yet (read-only).",
     )
     .requiredOption("--agent <name>", "Agent Mail identity to tail")
     .option(
       "--project <path>",
-      "primary project for the check-inbox cross-poll (default: --cwd/$PWD)",
+      "primary project for the SQLite desync cross-check (default: --cwd/$PWD)",
     )
     .option(
       "--slugs <csv>",
@@ -197,7 +199,7 @@ function buildProgram(): Command {
     )
     .option(
       "--confirm <n>",
-      "ok check-inbox polls a message may miss before DIVERGENCE (>= 1)",
+      "ok ticks a message may lag in SQLite before DIVERGENCE (>= 1)",
       parseLimit,
       3,
     )

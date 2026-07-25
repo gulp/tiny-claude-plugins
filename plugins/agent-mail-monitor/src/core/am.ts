@@ -71,91 +71,6 @@ export async function amPresent(): Promise<boolean> {
   }
 }
 
-// --- check-inbox schema (Zod safeParse on the untrusted am --json body) ------
-//
-// nullish() = the field may be ABSENT or null. This is the classic
-// untrusted-JSON footgun the plan calls out: nullable() is present-but-null,
-// optional() is may-be-absent; nullish() covers both, which is what a
-// best-effort CLI payload actually is. passthrough() keeps unknown keys so a
-// future `am` field never makes a valid payload fail to parse.
-const MessageSchema = z
-  .object({
-    id: z.number(),
-    from: z.string().nullish(),
-    importance: z.string().nullish(),
-    subject: z.string().nullish(),
-  })
-  .passthrough();
-
-const CheckInboxSchema = z
-  .object({
-    messages: z.array(MessageSchema).default([]),
-  })
-  .passthrough();
-
-export type InboxMessage = z.infer<typeof MessageSchema>;
-
-export interface PollResult {
-  ok: boolean;
-  messages: InboxMessage[];
-  maxId: number;
-  error?: string;
-}
-
-/**
- * One check-inbox poll. CONSUMPTION WARNING: `am check-inbox` without `--direct`
- * is NOT read-only when the am daemon is up (the default) — it routes through the
- * server's fetch_inbox, which MARKS RETURNED MESSAGES READ (verified against am
- * v0.3.21; the pure-SELECT path requires `--direct` AND no daemon listening, and
- * this call passes neither). So every poll marks the returned mail read and can
- * steal it from a later interactive fetch_inbox(unread_only). The fix is to move
- * the watch backend to the append-only canonical git-mailbox on disk (see
- * ./mailbox.ts + the plugin beads); this function is retained for the current
- * watch and the shadow cross-check only. A poll is OK only if am exits 0 AND the
- * body parses to the expected shape.
- */
-export async function pollInbox(
-  agent: string,
-  project: string,
-  signal?: AbortSignal,
-): Promise<PollResult> {
-  const empty = (error: string): PollResult => ({ ok: false, messages: [], maxId: 0, error });
-
-  let res: AmResult;
-  try {
-    res = await runAm(
-      ["check-inbox", "--agent", agent, "--project", project, "--rate-limit", "0", "--json"],
-      { signal },
-    );
-  } catch (e) {
-    if (e instanceof AppError) return empty(e.message);
-    throw e;
-  }
-  if (res.code !== 0) return empty(res.stderr.trim() || `am exited ${res.code}`);
-
-  // `am check-inbox` prints NOTHING on a zero-unread inbox (it is built for git
-  // hooks): empty stdout with exit 0 is SUCCESS, not a malformed body. Without
-  // this guard JSON.parse("") throws and the first poll reports failure → exit 4,
-  // so the monitor can never arm on an empty inbox — the common steady state.
-  // Return ok:true (NOT the empty() helper, which is ok:false and reads as a
-  // failure). The real shape guard below still fails loudly on a genuine
-  // non-JSON body (e.g. an HTML error page).
-  if (res.stdout.trim() === "") return { ok: true, messages: [], maxId: 0 };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(res.stdout);
-  } catch {
-    return empty("check-inbox did not return JSON");
-  }
-  const check = CheckInboxSchema.safeParse(parsed);
-  if (!check.success) return empty(`unexpected check-inbox shape: ${check.error.message}`);
-
-  const messages = check.data.messages;
-  const maxId = messages.reduce((m: number, msg: InboxMessage) => Math.max(m, msg.id), 0);
-  return { ok: true, messages, maxId };
-}
-
 // --- product (multi-project) mode -------------------------------------------
 //
 // A product is a cross-project bus: `am products inbox <key> <agent>` aggregates
@@ -215,7 +130,8 @@ function coerceInboxEnvelope(parsed: unknown): unknown {
  * strictly newer than the watermark; we still guard by created_ts in the caller.
  * Genuinely read-only: the product path (`fetch_inbox_product`, and the offline
  * local-DB fallback) does NOT mark messages read (verified against am v0.3.21) —
- * UNLIKE single-project `check-inbox`, whose daemon path consumes (see pollInbox).
+ * UNLIKE single-project `check-inbox`, whose daemon path consumes (retired from
+ * the notification path entirely; see tcp-p0x.16.4).
  */
 export async function productsInbox(
   productKey: string,
