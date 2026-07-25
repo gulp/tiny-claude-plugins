@@ -313,8 +313,26 @@ function buildProgram(): Command {
       const agent = Deno.env.get("AGENT_NAME") ?? "";
       if (!agent) {
         // Loud on stdout (the only stream a Monitor surfaces), non-zero exit.
+        //
+        // tcp-p0x.5 evaluated retargeting this to exit 0 (the Monitor host's
+        // "clean end") so a harness that labels any nonzero exit as
+        // `status: failed` wouldn't read auto-arm-with-no-identity as a crash.
+        // Kept at NO_IDENTITY (3) on purpose: it's the ONLY producer of that
+        // code in this CLI, and it's part of the documented, repo-wide
+        // exit-code contract (../../CLAUDE.md Conventions: 2=usage,
+        // 3=missing required identity/env, 4=first-poll-failed) — silently
+        // repurposing 3 to mean "success" here would break it for any other
+        // caller that branches on $? (a skill, a wrapper script, a human
+        // checking after a manual run). The harness's failed/idle labeling is
+        // outside this CLI's control either way. So the fix is on the ONE
+        // channel this CLI does own: the message below preempts the exact
+        // false alarm ("was mail dropped?") the label triggers.
         console.log(
           "agent-mail-monitor: AGENT_NAME unset — NOT watching any inbox (idle). No mail will be reported.",
+        );
+        console.log(
+          "agent-mail-monitor: this is NOT a crash and no mail was dropped — the backend is " +
+            "read-only and never consumes mail; it simply has no identity to watch under yet.",
         );
         console.log(
           "agent-mail-monitor: fix — relaunch with an identity, e.g.  AGENT_NAME=YourName claude  (or run the agent-mail-monitor:doctor skill).",

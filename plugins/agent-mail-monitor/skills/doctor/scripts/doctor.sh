@@ -72,7 +72,7 @@ fi
 if have curl; then
 	code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null)
 	if [ "$code" = "000" ] || [ -z "$code" ]; then
-		w "server" "no HTTP response from $url (server may be stopped — the CLI can still read SQLite directly)" "server-down.md"
+		w "server" "no HTTP response from $url — server may be stopped, OR busy under a DB-lock (a mutating op holds an exclusive activity lock and can block reads too); verify with the diagnose-agent-mail-service skill before restarting, don't blind-retry" "server-down.md"
 	else
 		ok "server" "responds at $url (HTTP $code)"
 	fi
@@ -90,7 +90,18 @@ if have am && have jq; then
 	if [ "$overall" = "healthy" ]; then
 		ok "health" "am health: overall=$overall level=$level"
 	else
-		w "health" "am health: overall=$overall level=$level — inspect with 'am health --json' / 'am doctor check'" "server-down.md"
+		# Name the actual failing probe(s) instead of a bare overall=unhealthy —
+		# a single-probe drift (commonly archive_db_parity: archive-vs-DB
+		# project/message counts, often just stale sandbox eval dirs, not mail
+		# at risk) otherwise reads as a whole-system outage. Falls back to the
+		# old generic line if `.probes` is absent/unparseable (older `am`, or a
+		# malformed response).
+		failing=$(printf '%s' "$hj" | jq -r '[(.probes // [])[] | select(.status=="fail") | .name] | join(", ")' 2>/dev/null)
+		if [ -n "$failing" ]; then
+			w "health" "am health: unhealthy (probe: $failing) — inspect with 'am health --json' / 'am doctor check'" "server-down.md"
+		else
+			w "health" "am health: overall=$overall level=$level — inspect with 'am health --json' / 'am doctor check'" "server-down.md"
+		fi
 	fi
 fi
 

@@ -32,7 +32,7 @@ Each line is `[PASS] / [WARN] / [FAIL] <check> — <detail>`, and failing checks
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | `am-cli`          | the `am` (Agent Mail) CLI the monitor polls                                                                                                                             | `resources/install-prereqs.md` |
 | `jq`              | JSON parser the watch script uses                                                                                                                                       | `resources/install-prereqs.md` |
-| `server`          | the Agent Mail HTTP endpoint answers (a live server returns any code; `000` = down)                                                                                     | `resources/server-down.md`     |
+| `server`          | the Agent Mail HTTP endpoint answers (a live server returns any code; `000` = down, or busy under a DB lock — see below)                                                | `resources/server-down.md`     |
 | `health`          | `am health` verdict — surfaces DB/archive drift even when the port is up                                                                                                | `resources/server-down.md`     |
 | `mcp-declaration` | `claude mcp get mcp-agent-mail`'s exact state — absent / ✘ Rejected / ⏸ Pending approval / ✔ Connected — needed for the agent's MCP mail tools, **not** for the monitor | `resources/declare-mcp.md`     |
 | `agent-name`      | `AGENT_NAME` is set — the identity the monitor watches; unset ⇒ it idles                                                                                                | `resources/set-agent-name.md`  |
@@ -52,3 +52,8 @@ asking. The `mcp-declaration` fix has a ready-to-adapt server snippet in
   (`declare-mcp.md`), not a fresh declaration — re-declaring on top of a rejection is a dead end.
 - **`agent-name` warn** → with no identity the monitor does not idle silently; it emits a loud
   notice and exits (code 3) until an `AGENT_NAME` exists.
+- **`server` warn with a `000`/no-response detail** → don't assume "down" and restart. A mutating
+  `am` op (contact approve, mail reply) holds an exclusive activity lock that can block reads too,
+  which looks identical to a wedge from here. **Verify state, don't blind-retry** — run the
+  `diagnose-agent-mail-service` skill first; only its `WEDGED`/`DEAD`/`ORPHAN` verdicts call for a
+  restart (see `resources/server-down.md`).
