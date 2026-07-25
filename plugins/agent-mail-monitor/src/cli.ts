@@ -81,8 +81,56 @@ interface ShadowCmdOpts {
   interval: number;
 }
 
-function resolveProject(explicit: string | undefined, globalCwd: string | undefined): string {
-  return explicit ?? globalCwd ?? Deno.env.get("CLAUDE_PROJECT_DIR") ?? Deno.cwd();
+/** Where the watched project key came from. The Agent Mail `project_key` IS the
+ *  absolute project path, so a wrong path silently watches a different bus — the
+ *  provenance is what lets callers warn on the one unsafe source. */
+export type ProjectSource = "--project" | "--cwd" | "$CLAUDE_PROJECT_DIR" | "cwd-fallthrough";
+export interface ResolvedProject {
+  path: string;
+  source: ProjectSource;
+}
+
+/** Pure resolution core (tcp-ssu): the two ambient inputs — the env var and the
+ *  process cwd — are passed in, so provenance is decidable without touching real
+ *  globals. Truthy (not `??`) checks on purpose: an EMPTY `--cwd`/`CLAUDE_PROJECT_DIR`
+ *  is a degenerate project key, so it falls through to a real cwd rather than
+ *  resolving to "" — closing the empty-env variant of the same wrong-bus bug. */
+export function resolveProjectFrom(
+  explicit: string | undefined,
+  globalCwd: string | undefined,
+  claudeProjectDir: string | undefined,
+  cwd: string,
+): ResolvedProject {
+  if (explicit) return { path: explicit, source: "--project" };
+  if (globalCwd) return { path: globalCwd, source: "--cwd" };
+  if (claudeProjectDir) return { path: claudeProjectDir, source: "$CLAUDE_PROJECT_DIR" };
+  return { path: cwd, source: "cwd-fallthrough" };
+}
+
+function resolveProject(
+  explicit: string | undefined,
+  globalCwd: string | undefined,
+): ResolvedProject {
+  return resolveProjectFrom(explicit, globalCwd, Deno.env.get("CLAUDE_PROJECT_DIR"), Deno.cwd());
+}
+
+/** Confirm WHICH bus is being watched (so an operator can catch a wrong one), and
+ *  WARN loudly when the key was merely inferred from cwd — the silent-wrong-bus
+ *  hazard tcp-ssu was filed for (field-reported under a Monitor host whose cwd was
+ *  unrelated to the session's project). `emit` is injected so the caller picks the
+ *  stream: stdout for `monitor` (the only stream a Monitor host surfaces), stderr
+ *  for `watch` (keeps stdout a pure per-message stream). */
+export function noteResolvedBus(resolved: ResolvedProject, emit: (line: string) => void): void {
+  emit(
+    `agent-mail-monitor: watching project bus '${resolved.path}' (resolved from ${resolved.source}).`,
+  );
+  if (resolved.source === "cwd-fallthrough") {
+    emit(
+      "agent-mail-monitor: WARNING — project not pinned (no --project / --cwd / $CLAUDE_PROJECT_DIR); " +
+        "bus was inferred from the process working directory and may be the WRONG one under a Monitor host. " +
+        "Pin it with --cwd <project-dir> or CLAUDE_PROJECT_DIR=<project-dir>.",
+    );
+  }
 }
 
 // $MAIL_WATCH_SCOPE (tcp-p0x.16.2) — env-only, read by the `monitor` entrypoint
@@ -133,11 +181,13 @@ function buildProgram(): Command {
     .option("--interval <sec>", "seconds between polls (>= 1)", parseInterval, 30)
     .action(async (opts: WatchCmdOpts) => {
       const g = program.opts();
-      const project = resolveProject(opts.project, g.cwd);
+      const resolved = resolveProject(opts.project, g.cwd);
+      // stderr: `watch`'s stdout is a pure one-line-per-message stream.
+      noteResolvedBus(resolved, console.error);
       const code = await runWatch({
         agent: opts.agent,
         root: opts.root ?? defaultMailboxRoot(),
-        slugs: [slugForProject(project)],
+        slugs: [slugForProject(resolved.path)],
         since: opts.since,
         interval: opts.interval,
         signal: shutdown.signal,
@@ -207,7 +257,7 @@ function buildProgram(): Command {
     .option("--interval <sec>", "seconds between polls (>= 1)", parseInterval, 30)
     .action(async (opts: ShadowCmdOpts) => {
       const g = program.opts();
-      const project = resolveProject(opts.project, g.cwd);
+      const project = resolveProject(opts.project, g.cwd).path;
       const code = await runShadow({
         agent: opts.agent,
         root: opts.root ?? defaultMailboxRoot(),
@@ -267,7 +317,11 @@ function buildProgram(): Command {
       // exactly [projectSlug], byte-identical to pre-tcp-p0x.16.2 behavior.
       const scope = resolveWatchScopeEnv();
       const root = defaultMailboxRoot();
-      const projectSlug = slugForProject(resolveProject(undefined, g.cwd));
+      const resolved = resolveProject(undefined, g.cwd);
+      // stdout: a Monitor host surfaces only stdout, so the confirmation/warning
+      // must go there to be seen (this is the field-reported wrong-bus path).
+      noteResolvedBus(resolved, console.log);
+      const projectSlug = slugForProject(resolved.path);
       let slugs: string[];
       try {
         slugs = await resolveScopeSlugs({
