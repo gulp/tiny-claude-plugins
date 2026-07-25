@@ -29,6 +29,38 @@ am products ensure <PRODUCT_KEY> [--name "<display name>"]
 later pass as `--product`/`AGENT_MAIL_PRODUCT`. Running `ensure` again for a
 key that already exists is a no-op.
 
+### Naming rule: work-descriptive, never operator-descriptive
+
+A product groups **repos** — the workload — never the human running them. Name
+the key for the work it spans (`everything-ecosystem`, `mobbin-frontend-suite`),
+and never for the operator (no name, email, or handle: `gulp-repos` and
+`yekta-projects` are both wrong for the same reason).
+
+The leak vector is narrow but real: the product itself only ever links
+project-keys (repo paths), which is already privacy-safe — the *key's name* is
+the one place operator identity can sneak back in. This mirrors the discipline
+Agent Mail already enforces on agent names (identity/role-descriptive names are
+rejected in favor of a random adjective+noun, see `register_agent`): identity
+stays scoped to the workload, not the person operating it.
+
+This isn't a local convention — it's the same shape as two established identity
+models:
+
+- **[SPIFFE](https://spiffe.io/)** issues identity to *workloads* (a
+  `spiffe://trust-domain/workload` URI), never to the human or team that
+  deployed them. An Agent Mail project key is the workload-scoped analogue of a
+  SPIFFE trust domain.
+- **[W3C `did:wba`](https://www.w3.org/TR/did-wba/)** mints a DID for the
+  *web-based agent* itself (anchored to the domain it runs on) — the human
+  operating it never becomes a DID subject, stays above the identity graph
+  entirely.
+
+Both converge on the same rule this skill enforces: identify the workload, not
+the person. **Do not build an operator roster** (a `roster.jsonl` or any file
+mapping a human to their N agent identities) to make product-key naming
+"friendlier" — that file is exactly the identity-exposure move the naming rule
+exists to prevent, out of scope for this skill by design.
+
 ## 2. Link every repo into the product — once per repo
 
 ```bash
@@ -115,3 +147,7 @@ microsecond-tie edge case.
   is functionally the same as never registering there.
 - **Treating `am products status` as instant.** A bad key can hang; always
   `timeout 15s` it.
+- **Naming the product key after the operator.** `gulp-repos` or an email/handle
+  re-introduces the exposure the workload-scoping is meant to prevent — name the
+  key for the work (see "Naming rule" under step 1), and never reach for a
+  roster file to compensate.
