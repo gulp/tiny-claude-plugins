@@ -9,8 +9,10 @@
 import { Command, CommanderError, InvalidArgumentError } from "commander";
 import { runWatch } from "./commands/watch.ts";
 import { runProductWatch } from "./commands/product.ts";
+import { resolveSlugs, runShadow } from "./commands/shadow.ts";
 import { runDoctor } from "./commands/doctor.ts";
 import { runCapabilities, runSchema } from "./commands/introspect.ts";
+import { defaultMailboxRoot, slugForProject } from "./core/mailbox.ts";
 import { AppError, ExitCode } from "./core/exit.ts";
 
 // --- graceful shutdown: one AbortController kills the `am` child AND ends the
@@ -63,6 +65,15 @@ interface ProductCmdOpts {
   interval: number;
 }
 
+interface ShadowCmdOpts {
+  agent: string;
+  project?: string;
+  slugs?: string;
+  root?: string;
+  confirm: number;
+  interval: number;
+}
+
 function resolveProject(explicit: string | undefined, globalCwd: string | undefined): string {
   return explicit ?? globalCwd ?? Deno.env.get("CLAUDE_PROJECT_DIR") ?? Deno.cwd();
 }
@@ -71,7 +82,9 @@ function buildProgram(): Command {
   const program = new Command();
   program
     .name("agent-mail")
-    .description("Read-only wrapper over the Agent Mail `am` CLI (monitor + query).")
+    .description(
+      "Watch/monitor + query wrapper over the Agent Mail `am` CLI. NOTE: the check-inbox-backed watch/monitor CONSUMES (marks mail read) when the am daemon is up — only the product path and the on-disk FS tail are non-consuming.",
+    )
     .option("--json", "emit versioned JSON envelopes for query/introspection commands", false)
     .option("--output <fmt>", "output format for query commands (json|human)", "human")
     .option("--cwd <path>", "project directory (default: $CLAUDE_PROJECT_DIR or cwd)")
@@ -79,7 +92,9 @@ function buildProgram(): Command {
 
   program
     .command("watch")
-    .description("Emit one stdout line per NEW message for --agent (read-only).")
+    .description(
+      "Emit one stdout line per NEW message for --agent. NOTE: polls check-inbox, which CONSUMES (marks read) when the am daemon is up.",
+    )
     .requiredOption("--agent <name>", "Agent Mail identity to watch")
     .option("--project <path>", "project key (default: --cwd or $PWD)")
     .option(
@@ -124,6 +139,51 @@ function buildProgram(): Command {
         agent: opts.agent,
         interval: opts.interval,
         limit: opts.limit,
+        signal: shutdown.signal,
+      });
+      Deno.exit(code);
+    });
+
+  // shadow — PROTOTYPE. Tail the durable git-mailbox (canonical, SQLite-free) and
+  // cross-check check-inbox: emit new canonical mail AND a loud DIVERGENCE line for
+  // any canonical message check-inbox never corroborates. Read-only. Arm next to
+  // the normal watch to see whether the filesystem store catches what SQLite drops.
+  program
+    .command("shadow")
+    .description(
+      "PROTOTYPE: tail the durable git-mailbox and flag mail check-inbox drops (read-only).",
+    )
+    .requiredOption("--agent <name>", "Agent Mail identity to tail")
+    .option(
+      "--project <path>",
+      "primary project for the check-inbox cross-poll (default: --cwd/$PWD)",
+    )
+    .option(
+      "--slugs <csv>",
+      "comma-separated project slugs to tail (default: derived from --project)",
+    )
+    .option(
+      "--root <path>",
+      "mailbox repo root (default: $AGENT_MAIL_MAILBOX_ROOT or ~/.mcp_agent_mail_git_mailbox_repo)",
+    )
+    .option(
+      "--confirm <n>",
+      "ok check-inbox polls a message may miss before DIVERGENCE (>= 1)",
+      parseLimit,
+      3,
+    )
+    .option("--interval <sec>", "seconds between polls (>= 1)", parseInterval, 30)
+    .action(async (opts: ShadowCmdOpts) => {
+      const g = program.opts();
+      const project = resolveProject(opts.project, g.cwd);
+      const code = await runShadow({
+        agent: opts.agent,
+        root: opts.root ?? defaultMailboxRoot(),
+        slugs: resolveSlugs(opts.slugs, project),
+        project,
+        primarySlug: slugForProject(project),
+        confirm: opts.confirm,
+        interval: opts.interval,
         signal: shutdown.signal,
       });
       Deno.exit(code);
