@@ -21,6 +21,20 @@
 // empty/missing inbox is a legitimate steady state for a fresh identity, so it
 // arms cleanly (warned once) and stays live rather than failing loud.
 //
+// tcp-p0x.12 (recovery is lossless w.r.t. read-state): the transport hole that
+// bug describes was a property of the RETIRED check-inbox backend — `check-inbox`
+// returns UNREAD messages only, so a message arriving during a poll outage and
+// then read elsewhere before recovery had already left the unread set and was
+// silently dropped. This FS backend has no such hole BY CONSTRUCTION: the source
+// is the on-disk `.md` file (read via `snapshot`), which persists regardless of
+// read/ack state, and recovery re-reads that full set gated only by the id
+// high-water mark `last`. A message that straddles an outage is therefore still
+// emitted on recovery even if another session marked it read in the meantime.
+// The regression test injects a throwing `snapshot` to reproduce the outage and
+// asserts exactly-one emission on recovery (see watch_test.ts). (The residual
+// out-of-order/backfill nuance — a LOWER id landing after a higher id was already
+// watermarked — is a distinct id-ordering concern, not this read-state one.)
+//
 // tcp-p0x.16.3: the source-project `<slug>` tag in the line below is emitted
 // in EVERY scope, including single-project "project" — not omitted there.
 // This delivers the original tcp-p0x.6 AC (a notification names which
@@ -60,6 +74,12 @@ export interface WatchOptions {
   /** Seconds between polls, >= 1. */
   interval: number;
   signal: AbortSignal;
+  /** Snapshot source, defaulting to the real `snapshotMailbox`. A seam for
+   *  tcp-p0x.12: the ONLY way to reproduce a poll OUTAGE (a snapshot that throws
+   *  for a tick or two, then recovers) in a test, so the recovery path can be
+   *  asserted lossless. Production never passes this — it always tails the real
+   *  on-disk git-mailbox. */
+  snapshot?: (root: string, slugs: string[], agent: string) => Promise<SnapshotResult>;
 }
 
 export interface ScopeResolveOptions {
@@ -133,6 +153,7 @@ function maxId(entries: MailboxEntry[]): number {
  */
 export async function runWatch(opts: WatchOptions): Promise<number> {
   const { agent, root, slugs, interval, signal } = opts;
+  const snapshot = opts.snapshot ?? snapshotMailbox;
   let last: number | undefined = opts.since; // high-water; undefined until baselined
   let warnedMissing = false;
   let warnedSkips = false;
@@ -140,7 +161,7 @@ export async function runWatch(opts: WatchOptions): Promise<number> {
   while (!signal.aborted) {
     let snap: SnapshotResult;
     try {
-      snap = await snapshotMailbox(root, slugs, agent);
+      snap = await snapshot(root, slugs, agent);
     } catch (e) {
       if (signal.aborted) break;
       // snapshotMailbox is documented never-throw; treat an unexpected throw as

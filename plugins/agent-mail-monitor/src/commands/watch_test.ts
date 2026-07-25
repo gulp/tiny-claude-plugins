@@ -32,7 +32,7 @@
 
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { resolveScopeSlugs, runWatch } from "./watch.ts";
-import { inboxDir, listInboxSlugs } from "../core/mailbox.ts";
+import { inboxDir, listInboxSlugs, snapshotMailbox } from "../core/mailbox.ts";
 import { AppError, ExitCode } from "../core/exit.ts";
 
 async function writeMsg(dir: string, name: string): Promise<void> {
@@ -310,6 +310,86 @@ Deno.test("resolveScopeSlugs: 'all' delegates to mailbox.ts listInboxSlugs", asy
       viaResolve,
       viaMailbox,
       "resolveScopeSlugs('all') must match listInboxSlugs exactly",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// --- tcp-p0x.12: recovery is lossless w.r.t. read-state -----------------------
+//
+// The bug: the RETIRED check-inbox backend re-fetched the UNREAD set on recovery,
+// so a message that arrived during a poll outage and was read elsewhere before
+// recovery was silently dropped. The FS backend reads the on-disk file, which
+// read/ack state can't remove — so recovery is lossless. This test reproduces the
+// four-step repro faithfully: baseline, an OUTAGE (the snapshot throws for two
+// ticks) during which a new message lands on disk, then recovery — and asserts
+// the straddling message fires EXACTLY ONCE. The injected snapshot is the only
+// way to reproduce a poll outage; on the recovery tick it delegates to the real
+// snapshotMailbox, so the message is emitted from the genuine on-disk read. The
+// "read elsewhere" dimension needs no simulation: the watch never consults
+// read-state, so a concurrent ack is a no-op by construction — the file's mere
+// presence drives emission, which is exactly the property the old backend lacked.
+Deno.test("watch (tcp-p0x.12): a message straddling a poll outage still fires exactly once on recovery", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-outage-test-" });
+  const agent = "Tester";
+  const slug = "proj-outage";
+  const dir = `${inboxDir(root, slug, agent)}/2026/07`;
+
+  try {
+    // Baseline mail present before arm — adopted silently as the watermark.
+    await writeMsg(dir, "2026-07-24T10-00-00Z__baseline__10.md");
+
+    let call = 0;
+    let arrivedDuringOutage = false;
+    // Ticks 2 and 3 THROW (the outage). On tick 2 we also land a new message on
+    // disk — it "arrives during the outage". Every other tick delegates to the
+    // real on-disk snapshot, so recovery reads the genuine file set.
+    const flakySnapshot = async (r: string, s: string[], a: string) => {
+      call++;
+      if (call === 2 && !arrivedDuringOutage) {
+        await writeMsg(dir, "2026-07-24T11-00-00Z__straddler__20.md");
+        arrivedDuringOutage = true;
+      }
+      if (call === 2 || call === 3) {
+        throw new Error(`simulated poll outage (tick ${call})`);
+      }
+      return await snapshotMailbox(r, s, a);
+    };
+
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slug],
+        interval: 1,
+        signal: ac.signal,
+        snapshot: flakySnapshot,
+      });
+      // Tick 1 baselines (id=10). Ticks 2-3 are the outage (throw, retry). Tick 4+
+      // recovers and must emit id=20. Give it enough ticks to get past recovery.
+      await new Promise((r) => setTimeout(r, 5000));
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(
+      mailLines.length,
+      1,
+      `expected exactly 1 MAIL line (lossless, no dup) — got: ${JSON.stringify(mailLines)}`,
+    );
+    assert(mailLines[0].includes("#20"), `the straddling message must fire: ${mailLines[0]}`);
+    assert(
+      !mailLines.some((l) => l.includes("#10")),
+      "pre-existing baseline mail must not be replayed",
+    );
+    // The outage must have been exercised, not skipped — else the test is hollow.
+    assert(call >= 4, `expected the loop to survive the outage into recovery (calls=${call})`);
+    assert(
+      lines.some((l) => l.includes("snapshot error")),
+      "the degraded-tick notice should have fired during the outage",
     );
   } finally {
     await Deno.remove(root, { recursive: true });
