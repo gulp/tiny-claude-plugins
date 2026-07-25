@@ -54,6 +54,7 @@ function parseLimit(v: string): number {
 interface WatchCmdOpts {
   agent: string;
   project?: string;
+  root?: string;
   since?: number;
   interval: number;
 }
@@ -83,7 +84,7 @@ function buildProgram(): Command {
   program
     .name("agent-mail")
     .description(
-      "Watch/monitor + query wrapper over the Agent Mail `am` CLI. NOTE: the check-inbox-backed watch/monitor CONSUMES (marks mail read) when the am daemon is up — only the product path and the on-disk FS tail are non-consuming.",
+      "Watch/monitor + query wrapper over the Agent Mail `am` CLI. NOTE: watch/monitor (single project) and product tail non-consuming backends (the on-disk git-mailbox / the product bus) — only the shadow prototype's check-inbox cross-poll consumes (marks mail read).",
     )
     .option("--json", "emit versioned JSON envelopes for query/introspection commands", false)
     .option("--output <fmt>", "output format for query commands (json|human)", "human")
@@ -93,10 +94,14 @@ function buildProgram(): Command {
   program
     .command("watch")
     .description(
-      "Emit one stdout line per NEW message for --agent. NOTE: polls check-inbox, which CONSUMES (marks read) when the am daemon is up.",
+      "Emit one stdout line per NEW message for --agent. Tails the durable git-mailbox on disk — read-only, never marks mail read (single project; see the `product` command for cross-project).",
     )
     .requiredOption("--agent <name>", "Agent Mail identity to watch")
     .option("--project <path>", "project key (default: --cwd or $PWD)")
+    .option(
+      "--root <path>",
+      "mailbox repo root (default: $AGENT_MAIL_MAILBOX_ROOT or ~/.mcp_agent_mail_git_mailbox_repo)",
+    )
     .option(
       "--since <id>",
       "emit messages with id > ID (replays existing above ID once)",
@@ -105,9 +110,11 @@ function buildProgram(): Command {
     .option("--interval <sec>", "seconds between polls (>= 1)", parseInterval, 30)
     .action(async (opts: WatchCmdOpts) => {
       const g = program.opts();
+      const project = resolveProject(opts.project, g.cwd);
       const code = await runWatch({
         agent: opts.agent,
-        project: resolveProject(opts.project, g.cwd),
+        root: opts.root ?? defaultMailboxRoot(),
+        slug: slugForProject(project),
         since: opts.since,
         interval: opts.interval,
         signal: shutdown.signal,
@@ -228,7 +235,8 @@ function buildProgram(): Command {
         })
         : await runWatch({
           agent,
-          project: resolveProject(undefined, g.cwd),
+          root: defaultMailboxRoot(),
+          slug: slugForProject(resolveProject(undefined, g.cwd)),
           interval: Number(rawInterval),
           signal: shutdown.signal,
         });
