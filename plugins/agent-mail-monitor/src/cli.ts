@@ -274,7 +274,7 @@ function buildProgram(): Command {
           root,
           agent,
           projectSlug,
-          productKey: Deno.env.get("MAIL_PRODUCT") ?? undefined,
+          productKey: Deno.env.get("AGENT_MAIL_PRODUCT") ?? undefined,
         });
       } catch (e) {
         if (e instanceof AppError) {

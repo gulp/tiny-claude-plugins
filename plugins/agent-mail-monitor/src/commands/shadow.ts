@@ -86,6 +86,13 @@ interface Pending {
 
 const SKIP_WARN_THRESHOLD = 1; // one skipped(unparseable) file is worth a loud line
 
+// Max ids bound into a single `... IN (?, ?, …)` query. Kept well under SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER (999 on older builds; 32766 since 3.32) so the
+// desync cross-check never throws "too many SQL variables" on a busy identity —
+// `checkDesync` can pass EVERY canonical message for a project at once, an
+// FS-derived count with no upper bound. Queried in chunks, results unioned.
+const SQLITE_IN_CHUNK = 500;
+
 function mailLine(e: MailboxEntry): string {
   return `MAIL #${e.id} [${e.project}] ${e.ts}: ${e.subject}`;
 }
@@ -144,12 +151,17 @@ function queryKnownIds(
       WHERE p.slug = ? AND a.name = ?`,
   ).get(slug, agent) as { agent_id: number } | undefined;
   if (!agentRow) return { agentKnown: false, known };
-  const placeholders = ids.map(() => "?").join(",");
-  const rows = db.prepare(
-    `SELECT r.message_id AS id FROM message_recipients r
-      WHERE r.agent_id = ? AND r.message_id IN (${placeholders})`,
-  ).all(agentRow.agent_id, ...ids) as Array<{ id: number }>;
-  for (const row of rows) known.add(row.id);
+  // Chunk the id set so the bound-parameter count can never exceed SQLite's
+  // limit (see SQLITE_IN_CHUNK) — the union of per-chunk hits is the answer.
+  for (let i = 0; i < ids.length; i += SQLITE_IN_CHUNK) {
+    const chunk = ids.slice(i, i + SQLITE_IN_CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db.prepare(
+      `SELECT r.message_id AS id FROM message_recipients r
+        WHERE r.agent_id = ? AND r.message_id IN (${placeholders})`,
+    ).all(agentRow.agent_id, ...chunk) as Array<{ id: number }>;
+    for (const row of rows) known.add(row.id);
+  }
   return { agentKnown: true, known };
 }
 

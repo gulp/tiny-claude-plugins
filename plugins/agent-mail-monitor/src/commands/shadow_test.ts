@@ -129,6 +129,37 @@ Deno.test("checkDesync: missing SQLite store -> dbUnavailable, not a throw, not 
   }
 });
 
+Deno.test("checkDesync: large id set spanning multiple SQLite chunks is unioned correctly", async () => {
+  // More canonical messages than fit in one bound `IN (...)` query (chunk size
+  // is 500), so the cross-check MUST batch and union across the boundary. Proves
+  // the batching drops and duplicates nothing — a lagging id in each of the two
+  // chunks is reported, everything else corroborated.
+  const root = await Deno.makeTempDir({ prefix: "shadow-desync-chunk-" });
+  try {
+    const ids: number[] = [];
+    for (let id = 1; id <= 600; id++) ids.push(id);
+    const ts = "2026-07-24T10-00-00Z"; // shared ts => one YYYY/MM dir, cheap
+    for (const id of ids) {
+      await writeCanonicalMsg(root, "proj-a", "WindyBarn", ts, `m${id}`, id);
+    }
+
+    const lagging = [200, 550]; // one per chunk (1–500, 501–600)
+    const delivered = ids.filter((id) => !lagging.includes(id));
+
+    const dbPath = `${root}/storage.sqlite3`;
+    buildFixtureDb(dbPath, [
+      { projectId: 1, slug: "proj-a", agentId: 1, agentName: "WindyBarn", delivered },
+    ]);
+
+    const result = await checkDesync({ root, slugs: ["proj-a"], agent: "WindyBarn", dbPath });
+    assertEquals(result.dbUnavailable, null);
+    assertEquals(result.checked, ids.length);
+    assertEquals(result.lagging.map((e) => e.id), lagging);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("checkDesync: NEVER touches read_ts (the load-bearing non-consuming AC)", async () => {
   const root = await Deno.makeTempDir({ prefix: "shadow-desync-readts-" });
   try {

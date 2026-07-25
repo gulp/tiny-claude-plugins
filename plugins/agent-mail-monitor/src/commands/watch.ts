@@ -69,7 +69,7 @@ export interface ScopeResolveOptions {
   agent: string;
   /** The caller's own project slug — the "project" scope target. */
   projectSlug: string;
-  /** $MAIL_PRODUCT, when scope === "product" (unused by the current stub). */
+  /** $AGENT_MAIL_PRODUCT, when scope === "product" (unused by the current stub). */
   productKey?: string;
 }
 
@@ -106,8 +106,8 @@ export async function resolveScopeSlugs(opts: ScopeResolveOptions): Promise<stri
           "'agent-mail product' command, or set $AGENT_MAIL_PRODUCT for the 'monitor' " +
           "entrypoint (uses the SQLite product bus, verified non-consuming) instead." +
           (productKey
-            ? ` ($MAIL_PRODUCT='${productKey}' was read but is unused by this scope.)`
-            : " ($MAIL_PRODUCT is also unset.)"),
+            ? ` ($AGENT_MAIL_PRODUCT='${productKey}' was read but is unused by this scope.)`
+            : " ($AGENT_MAIL_PRODUCT is also unset.)"),
       );
   }
 }
