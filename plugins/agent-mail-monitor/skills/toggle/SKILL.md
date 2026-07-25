@@ -72,6 +72,27 @@ the project whose inbox you meant. If it resolved `from cwd-fallthrough`, the wa
 subcommand takes `--project <path>` for the same purpose; its confirmation line goes to stderr so
 stdout stays a pure per-message stream.)
 
+### Narrow what wakes you: `MAIL_WATCH_MODE` + `MAIL_WATCH_FILTER`
+
+Two env vars (both optional, monitor-only) shape which new messages notify and how loud:
+
+- **`MAIL_WATCH_MODE`** = `basic` (default) | `actionable`. In `actionable`, each notification is
+  tagged with the message's ack/urgency marker (e.g. `[ack]`, `[urgent]`) parsed from its
+  frontmatter; `basic` prints the plain per-message line with no marker.
+- **`MAIL_WATCH_FILTER`** = `ack` | `urgent` (unset = no filter). When set, only messages matching
+  that predicate notify at all — the rest are suppressed silently (a message whose ack/urgency
+  frontmatter can't be read warns once, then is treated as non-matching).
+
+**The filter is independent of the mode — deliberately** (resolved `tcp-g1z`). `MAIL_WATCH_FILTER`
+suppresses non-matching mail even in `basic` mode, so you can say "only wake me for urgent mail,
+plain output" with `MAIL_WATCH_FILTER=urgent` alone (no `actionable` needed). The two axes answer
+different questions — *which* messages wake you (filter) vs. *how much* each notification says
+(mode) — and are locked independent by tests in `src/commands/watch_test.ts`. Set either or both as
+a command prefix, same as `AGENT_NAME=`:
+
+- **command:**
+  `AGENT_NAME=YourName MAIL_WATCH_FILTER=urgent deno run --allow-run=am --allow-env --allow-read "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" monitor`
+
 ## Notes
 
 - **The backend is genuinely non-consuming.** It tails the append-only canonical git-mailbox on disk
