@@ -1,5 +1,6 @@
 // Integration test for the watch loop (tcp-p0x.16.1 single-project promotion +
-// tcp-p0x.16.2 MAIL_WATCH_SCOPE multi-slug support).
+// tcp-p0x.16.2 MAIL_WATCH_SCOPE multi-slug support + tcp-p0x.16.3 source-
+// project slug tagging).
 //
 // Drives runWatch against a REAL temp mailbox tree on disk (no fake `am` needed
 // now that the backend is `snapshotMailbox`, not check-inbox). Asserts the
@@ -18,6 +19,14 @@
 //      for the agent (delegates to mailbox.ts listInboxSlugs); "product" ->
 //      throws AppError(USAGE) rather than silently falling back (deferred,
 //      tcp-p0x.16.2 non-goal).
+// ...and the tcp-p0x.16.3 acceptance criteria (delivers the original
+// tcp-p0x.6 AC — a notification names which project the mail landed in):
+//   7. the notification format `MAIL #<id> [<slug>] <ts>: <subject>` holds
+//      in BOTH "project" and "all" scope — the slug tag is not omitted for
+//      single-project (test 1, above, now asserts this too);
+//   8. under "all" scope, each line's tag names ITS OWN origin project, not
+//      just "some" project — two concurrent notifications stay distinctly
+//      identifiable (test 5, above, now asserts this too).
 //
 // Run: deno test --allow-read --allow-write --allow-env src/commands/watch_test.ts
 
@@ -43,6 +52,13 @@ async function captureLog(fn: () => Promise<void>): Promise<string[]> {
   }
   return lines;
 }
+
+// tcp-p0x.16.3: the FORMALIZED notification format — `MAIL #<id> [<slug>]
+// <ts>: <subject>`. The source-project slug tag is present in EVERY scope,
+// including single-project "project" (the bead's Constraints leave this a
+// choice — decision: keep it for consistency, not conditional formatting; see
+// the format tests below and formatLine's doc in watch.ts).
+const MAIL_LINE_RE = /^MAIL #(\d+) \[([^\]]+)\] (\S+): (.*)$/;
 
 Deno.test("watch: seeded watermark suppresses replay; a new file fires exactly once", async () => {
   const root = await Deno.makeTempDir({ prefix: "watch-test-" });
@@ -84,6 +100,10 @@ Deno.test("watch: seeded watermark suppresses replay; a new file fires exactly o
       !mailLines.some((l) => l.includes("#10")),
       "pre-existing mail must not be replayed at arm (seeded watermark)",
     );
+    // tcp-p0x.16.3: project scope still tags the source-project slug.
+    const m = mailLines[0].match(MAIL_LINE_RE);
+    assert(m, `notification line does not match the documented format: ${mailLines[0]}`);
+    assertEquals(m![2], slug, "project scope must tag the source-project slug");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -210,6 +230,14 @@ Deno.test("watch: scope=all (multiple slugs) fires for a new message in EITHER p
       !mailLines.some((l) => l.includes("#10") || l.includes("#11")),
       "pre-existing mail in either project must not be replayed at arm",
     );
+    // tcp-p0x.16.3: each line's slug tag matches ITS OWN origin project, not
+    // just "some slug" — the two notifications must be distinctly identifiable.
+    const tags = mailLines.map((l) => {
+      const m = l.match(MAIL_LINE_RE);
+      assert(m, `notification line does not match the documented format: ${l}`);
+      return m![2];
+    });
+    assertEquals(new Set(tags), new Set([slugA, slugB]), "all scope: distinct source-project tags");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

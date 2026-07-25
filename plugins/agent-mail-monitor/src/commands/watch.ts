@@ -19,6 +19,19 @@
 // empty/missing inbox is a legitimate steady state for a fresh identity, so it
 // arms cleanly (warned once) and stays live rather than failing loud.
 //
+// tcp-p0x.16.3: the source-project `<slug>` tag in the line below is emitted
+// in EVERY scope, including single-project "project" — not omitted there.
+// This delivers the original tcp-p0x.6 AC (a notification names which
+// project the mail landed in) for `all`/`product` scope, where it is load-
+// bearing, and formalizes a decision the bead left open for "project": keep
+// the tag for consistency (one format, not a scope-conditional one) rather
+// than special-case it away — the cost is a few extra bytes per line, and it
+// means a human never has to remember "this format means single-project."
+// The tag was already free: `MailboxEntry.project` is stamped per-entry by
+// `snapshotMailbox` (../core/mailbox.ts) regardless of scope, so this is a
+// documentation/decision, not a functional change (see watch_test.ts for the
+// format regex asserted across both scopes).
+//
 // Output (stdout, one line per new message) — HUMAN, not an envelope, because
 // the Monitor turns each stdout line into a notification:
 //   MAIL #<id> [<project>] <ts>: <subject>
@@ -99,6 +112,9 @@ export async function resolveScopeSlugs(opts: ScopeResolveOptions): Promise<stri
 
 const SKIP_WARN_THRESHOLD = 1; // one skipped(unparseable) file is worth a loud line
 
+/** Formats one notification line — see the module doc's tcp-p0x.16.3 note for
+ * why `[${e.project}]` (the source-project slug) is always present, in every
+ * scope, not just cross-project ones. */
 function formatLine(e: MailboxEntry): string {
   return `MAIL #${e.id} [${e.project}] ${e.ts}: ${e.subject}`;
 }
