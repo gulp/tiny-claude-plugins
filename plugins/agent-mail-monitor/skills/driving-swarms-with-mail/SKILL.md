@@ -201,6 +201,43 @@ Consequently:
   closes. An agent that goes quiet between tasks reads, to the rest of the
   swarm, as stalled or crashed.
 
+## Fan-out: the `broadcast` flag works (despite one stale doc line)
+
+`send_message` supports project-wide fan-out via a `broadcast` flag — useful
+for a coordinator announcement that every current worker should see, without
+hand-listing every agent name:
+
+```
+send_message(
+  project_key=<absolute cwd>,
+  sender_name=<your name>,
+  broadcast=true,
+  to=[],   # must be empty — mutually exclusive with an explicit `to`
+  subject="...",
+  body_md="...",
+)
+```
+
+With `broadcast=true` and an empty `to`, the server expands the recipient
+list to every agent registered in the project that has been active in the
+last 30 days, minus the sender and anyone with `contact_policy=block_all`.
+This is real, unit-tested server behavior (`crates/mcp-agent-mail-tools/src/messaging.rs`
+in `mcp_agent_mail_rust`), not a client-side convention — it computes the
+recipient set fresh on each send rather than reading a stored group.
+
+Two things this is **not**:
+- **Not** a pseudo-recipient. Naming an agent `all` / `everyone` / `broadcast`
+  / `*` in `to` is explicitly rejected server-side ("Agent Mail doesn't
+  support broadcasting to all agents") — that error exists to steer you to
+  the flag above, not to deny the capability.
+- **Not** documented as working by `am robot-docs guide`, which currently
+  states "Broadcast send_message is intentionally unsupported." That line is
+  **stale** relative to the implemented, tested flag — a
+  documentation-vs-implementation drift, verified against the
+  `mcp_agent_mail_rust` source, not a code contradiction. Treat this skill,
+  not the CLI guide, as authoritative on broadcast for swarms in this repo
+  until the upstream guide is reconciled.
+
 ## Boundaries
 
 - **Stay inside your assigned lane.** If a task's acceptance criteria would
