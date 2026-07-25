@@ -232,6 +232,7 @@ export async function runWatch(opts: WatchOptions): Promise<number> {
   let last: number | undefined = opts.since; // high-water; undefined until baselined
   let warnedMissing = false;
   let warnedSkips = false;
+  let warnedAckFailures = false;
 
   while (!signal.aborted) {
     let snap: SnapshotResult;
@@ -289,6 +290,24 @@ export async function runWatch(opts: WatchOptions): Promise<number> {
         if (e.id <= last) continue;
         const needsAck = mode === "actionable" || filter !== undefined;
         const ack = needsAck ? await readAck(e.path) : null;
+        // A null ack under `needsAck` is anomalous: am always writes both
+        // `ack_required` and `importance`, so null means a missing/truncated/
+        // foreign frontmatter block — NOT a routine non-ack message. Left silent
+        // it degrades invisibly (suppressed under a filter, unmarked in
+        // actionable mode), so a systemic cause — a permissions regression, a
+        // writer bug corrupting frontmatter — would present as permanent silence
+        // with nothing wrong reported. Warn once (mirrors `warnedSkips`), naming
+        // the consequence so the degrade is observable rather than mysterious.
+        if (needsAck && ack === null && !warnedAckFailures) {
+          console.log(
+            `agent-mail-monitor: could not read ack/urgency frontmatter for new message ${e.path} (missing, truncated, or foreign file). ${
+              filter !== undefined
+                ? "Under MAIL_WATCH_FILTER it is treated as non-matching and SUPPRESSED"
+                : "In actionable mode it is shown WITHOUT an ack/urgency marker"
+            } — a persistent recurrence may mean corrupt frontmatter or a permissions issue on the mailbox.`,
+          );
+          warnedAckFailures = true;
+        }
         if (filter !== undefined && !matchesFilter(filter, ack)) continue;
         console.log(formatLine(e, mode === "actionable" ? ack : null));
       }

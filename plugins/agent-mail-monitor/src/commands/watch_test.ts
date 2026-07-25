@@ -651,6 +651,56 @@ Deno.test("watch (tcp-p0x.7): default (basic) mode is byte-for-byte unchanged, e
   }
 });
 
+Deno.test("watch (tcp-p0x.7): a new message with unreadable ack frontmatter is suppressed under a filter, but NOT silently — it warns once", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-ack-unreadable-" });
+  const agent = "Tester";
+  const slug = "proj-ack-bad";
+  const dir = `${inboxDir(root, slug, agent)}/2026/07`;
+
+  try {
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slug],
+        interval: 1,
+        filter: "ack",
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 1200)); // baseline
+
+      // `writeMsg` writes an empty `{}` frontmatter -> parseAckInfo returns null
+      // (both fields missing). This stands in for a truncated/corrupt/foreign
+      // message the filter genuinely cannot judge — the silent-drop hazard.
+      await writeMsg(dir, "2026-07-24T11-00-00Z__corrupt__20.md");
+      await new Promise((r) => setTimeout(r, 1200));
+
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(
+      mailLines.length,
+      0,
+      `an unjudgeable message must be suppressed under filter=ack: ${JSON.stringify(mailLines)}`,
+    );
+    // ...but the suppression must be OBSERVABLE, not a silent drop — otherwise a
+    // systemic frontmatter/permissions failure reads as "no ack mail arrived".
+    assert(
+      lines.some((l) => l.includes("could not read ack/urgency frontmatter")),
+      `an unreadable-ack suppression must warn, not drop silently: ${JSON.stringify(lines)}`,
+    );
+    assert(
+      lines.some((l) => l.includes("SUPPRESSED")),
+      "the warning must name the suppression consequence under a filter",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("resolveScopeSlugs: 'product' is a loud deferred stub, not a silent fallback", async () => {
   await assertRejects(
     () =>

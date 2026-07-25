@@ -2,7 +2,7 @@
 // absolute project path, so the ONLY unsafe source is the cwd fall-through — these
 // tests pin the provenance table and assert the warning fires on exactly that source.
 
-import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@^1.0.0";
 import {
   noteResolvedBus,
   noteResolvedProductBus,

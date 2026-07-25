@@ -47,7 +47,10 @@ w()    { printf '[WARN] %s — %s\n    → %s/resources/%s\n' "$1" "$2" "$skill_
 bad()  { printf '[FAIL] %s — %s\n    → %s/resources/%s\n' "$1" "$2" "$skill_root" "$3"; fail=$((fail+1)); }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# 1. am CLI — the monitor polls `am check-inbox`; without it nothing works.
+# 1. am CLI — doctor's own health/status probes shell out to it, and your
+#    agent's fetch_inbox/send_message MCP tools need it. (The FS watch backend
+#    itself does NOT — it reads the git-mailbox on disk directly — but doctor
+#    still can't run its server/health checks without am.)
 if have am; then
 	amver=$(am --version 2>/dev/null | head -1)
 	ok "am-cli" "${amver:-am present} ($(command -v am))"
@@ -55,11 +58,11 @@ else
 	bad "am-cli" "the Agent Mail 'am' CLI is not on PATH" "install-prereqs.md"
 fi
 
-# 2. jq — the watch script parses `am check-inbox --json` with jq.
+# 2. jq — doctor parses am's --json output (status, health) with it.
 if have jq; then
 	ok "jq" "$(command -v jq)"
 else
-	bad "jq" "'jq' is not on PATH (the watch parses JSON with it)" "install-prereqs.md"
+	bad "jq" "'jq' is not on PATH (doctor parses am --json output with it)" "install-prereqs.md"
 fi
 
 # 3. Agent Mail server reachability (curl). A live MCP endpoint answers any
@@ -84,23 +87,35 @@ fi
 #    says healthy; surface anything else as a WARN — do not bury a non-healthy
 #    'overall' just because 'health_level' happens to be green.
 if have am && have jq; then
-	hj=$(am health --json 2>/dev/null)
-	overall=$(printf '%s' "$hj" | jq -r '.overall // "unknown"' 2>/dev/null)
-	level=$(printf '%s' "$hj" | jq -r '.health_level // "unknown"' 2>/dev/null)
-	if [ "$overall" = "healthy" ]; then
-		ok "health" "am health: overall=$overall level=$level"
+	# Bound a hanging `am health` (a DB-lock can wedge it) and CAPTURE stderr —
+	# when the probe itself breaks, am's own message is the diagnostic.
+	hj=$(timeout 10s am health --json 2>&1)
+	hj_rc=$?
+	# Distinguish "the probe broke" (crash / timeout / unimplemented subcommand /
+	# empty or non-JSON output) from "am ran and reported degraded". Without this
+	# gate, empty/invalid input makes `jq '.overall // "unknown"'` emit NOTHING
+	# (jq errors before the `//` alternative runs), so `overall` ends up "" and
+	# the else-branch prints a misleading blank `overall= level=` as if am had
+	# answered. `jq -e .` validates that $hj is real JSON first.
+	if [ "$hj_rc" -ne 0 ] || ! printf '%s' "$hj" | jq -e . >/dev/null 2>&1; then
+		w "health" "am health --json did not return valid JSON (exit=$hj_rc) — the probe itself failed (crash / timeout / unimplemented / DB-lock), not a degraded verdict: $(printf '%s' "$hj" | tr '\n' ' ' | head -c 200)" "server-down.md"
 	else
-		# Name the actual failing probe(s) instead of a bare overall=unhealthy —
-		# a single-probe drift (commonly archive_db_parity: archive-vs-DB
-		# project/message counts, often just stale sandbox eval dirs, not mail
-		# at risk) otherwise reads as a whole-system outage. Falls back to the
-		# old generic line if `.probes` is absent/unparseable (older `am`, or a
-		# malformed response).
-		failing=$(printf '%s' "$hj" | jq -r '[(.probes // [])[] | select(.status=="fail") | .name] | join(", ")' 2>/dev/null)
-		if [ -n "$failing" ]; then
-			w "health" "am health: unhealthy (probe: $failing) — inspect with 'am health --json' / 'am doctor check'" "server-down.md"
+		overall=$(printf '%s' "$hj" | jq -r '.overall // "unknown"')
+		level=$(printf '%s' "$hj" | jq -r '.health_level // "unknown"')
+		if [ "$overall" = "healthy" ]; then
+			ok "health" "am health: overall=$overall level=$level"
 		else
-			w "health" "am health: overall=$overall level=$level — inspect with 'am health --json' / 'am doctor check'" "server-down.md"
+			# Name the actual failing probe(s) instead of a bare overall=unhealthy —
+			# a single-probe drift (commonly archive_db_parity: archive-vs-DB
+			# project/message counts, often just stale sandbox eval dirs, not mail
+			# at risk) otherwise reads as a whole-system outage. Falls back to the
+			# generic line if `.probes` is absent/the wrong shape (older `am`).
+			failing=$(printf '%s' "$hj" | jq -r '[(.probes // [])[] | select(.status=="fail") | .name] | join(", ")' 2>/dev/null)
+			if [ -n "$failing" ]; then
+				w "health" "am health: unhealthy (probe: $failing) — inspect with 'am health --json' / 'am doctor check'" "server-down.md"
+			else
+				w "health" "am health: overall=$overall level=$level — inspect with 'am health --json' / 'am doctor check'" "server-down.md"
+			fi
 		fi
 	fi
 fi

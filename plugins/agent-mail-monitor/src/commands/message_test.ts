@@ -3,7 +3,7 @@
 // directly: short-circuit on first hit, honest miss vs. unreachable, envelope
 // shape, and the fan-out cap.
 
-import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@^1.0.0";
 import { type LinkedProject, type MessageProbe } from "../core/am.ts";
 import { type MessageDeps, resolveMessage, runMessage } from "./message.ts";
 import { ExitCode } from "../core/exit.ts";

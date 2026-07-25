@@ -102,7 +102,7 @@ export function isMailWatchScope(v: string): v is MailWatchScope {
  */
 export async function listInboxSlugs(root: string, agent: string): Promise<string[]> {
   const projectsDir = `${root}/projects`;
-  let listing: Deno.DirEntry[] = [];
+  const listing: Deno.DirEntry[] = [];
   try {
     for await (const e of Deno.readDir(projectsDir)) listing.push(e);
   } catch {
