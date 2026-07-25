@@ -94,17 +94,34 @@ if have am && have jq; then
 	fi
 fi
 
-# 5. Agent Mail MCP server declared for Claude Code. The monitor does NOT need
-#    this (it uses the am CLI), but your agent's fetch_inbox/send_message MCP
-#    tools do — so a missing declaration is a WARN, not a hard fail.
+# 5. Agent Mail MCP server declared for Claude Code, and — if declared —
+#    actually usable. The monitor does NOT need this (it uses the am CLI),
+#    but your agent's fetch_inbox/send_message MCP tools do. `claude mcp get
+#    <name>` names the server's exact state (absent / Rejected / Pending
+#    approval / Connected) — checked against the exact server name, not a
+#    `claude mcp list | grep` substring match (which over-matched any server
+#    whose name merely contained "agent"/"mail").
+mcp_name=mcp-agent-mail
 if have claude; then
-	if timeout 20s claude mcp list 2>/dev/null | grep -qiE 'agent.?mail'; then
-		ok "mcp-declaration" "an agent-mail MCP server is declared in 'claude mcp list'"
+	mcp_out=$(timeout 20s claude mcp get "$mcp_name" 2>&1)
+	mcp_rc=$?
+	status_line=$(printf '%s\n' "$mcp_out" | grep -m1 '^  Status:')
+	if [ "$mcp_rc" -ne 0 ] || [ -z "$status_line" ]; then
+		w "mcp-declaration" "'$mcp_name' is not declared — the monitor still works, but MCP mail tools won't" "declare-mcp.md"
 	else
-		w "mcp-declaration" "no agent-mail server in 'claude mcp list' — the monitor still works, but MCP mail tools won't" "declare-mcp.md"
+		case "$status_line" in
+			*'✘ Rejected'*)
+				w "mcp-declaration" "'$mcp_name' is declared but REJECTED — remove it from disabledMcpjsonServers in .claude/settings.local.json" "declare-mcp.md" ;;
+			*'⏸ Pending approval'*)
+				w "mcp-declaration" "'$mcp_name' is declared but PENDING APPROVAL — approve at next 'claude' startup, or run /reload-plugins" "declare-mcp.md" ;;
+			*'✔ Connected'*)
+				ok "mcp-declaration" "'$mcp_name' is declared and connected" ;;
+			*)
+				w "mcp-declaration" "'$mcp_name' is declared with an unrecognized status (${status_line# })" "declare-mcp.md" ;;
+		esac
 	fi
 else
-	w "mcp-declaration" "'claude' not on PATH — cannot enumerate MCP servers" "declare-mcp.md"
+	w "mcp-declaration" "'claude' not on PATH — cannot check the '$mcp_name' MCP declaration" "declare-mcp.md"
 fi
 
 # 6. AGENT_NAME — the identity the monitor watches. Unset → the monitor emits a

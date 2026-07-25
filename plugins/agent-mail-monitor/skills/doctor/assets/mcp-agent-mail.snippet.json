@@ -1,17 +1,21 @@
 {
   "//": "Agent Mail MCP server declaration for Claude Code — from the project README:",
   "//2": "  https://github.com/Dicklesworthstone/mcp_agent_mail_rust",
-  "//3": "Paste the inner 'agent-mail' object under the 'mcpServers' key of your",
-  "//4": ".mcp.json (project) or ~/.claude/settings.json (user). Confirm host/port",
-  "//5": "against `am status --json` (.service.http_url) first. A stdio variant is",
-  "//6": "shown commented below for hosts that prefer launching the binary directly.",
+  "//3": "Paste the inner 'mcp-agent-mail' object under the 'mcpServers' key of your",
+  "//4": ".mcp.json (project) or ~/.claude/settings.json (user). The name MUST be",
+  "//5": "exactly 'mcp-agent-mail' — that's what the doctor check and",
+  "//6": "disabledMcpjsonServers both key on. Confirm host/port against",
+  "//7": "`am status --json` (.service.http_url) first — do not assume /mcp/; a",
+  "//8": "non-default deployment can serve a different path (e.g. /api/). A stdio",
+  "//9": "variant is shown commented below for hosts that prefer launching the",
+  "//10": "binary directly.",
   "mcpServers": {
-    "agent-mail": {
+    "mcp-agent-mail": {
       "type": "url",
       "url": "http://127.0.0.1:8765/mcp/"
     },
-    "agent-mail-stdio-alternative": {
-      "//": "delete 'agent-mail' above and rename this to 'agent-mail' to use stdio",
+    "mcp-agent-mail-stdio-alternative": {
+      "//": "delete 'mcp-agent-mail' above and rename this to 'mcp-agent-mail' to use stdio",
       "command": "mcp-agent-mail",
       "args": []
     }
