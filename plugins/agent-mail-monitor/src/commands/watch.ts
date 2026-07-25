@@ -4,9 +4,13 @@
 // the durable git-mailbox on disk via `snapshotMailbox` (../core/mailbox.ts).
 // OS file reads never mark mail read, so this backend is GENUINELY read-only —
 // unlike the check-inbox path it replaces (see ../core/am.ts `pollInbox`, still
-// used by the shadow prototype's cross-poll only). Single project only —
-// cross-project scope (MAIL_WATCH_SCOPE=all/product) is a later bead
-// (tcp-p0x.16.2); this loop tails exactly one project slug.
+// used by the shadow prototype's cross-poll only).
+//
+// tcp-p0x.16.2: the loop itself now tails an arbitrary SET of project slugs
+// (`WatchOptions.slugs`), not exactly one — `resolveScopeSlugs` below is how a
+// caller turns `MAIL_WATCH_SCOPE=project|all|product` into that set. Passing a
+// single-element array reproduces T1's single-project behavior byte-for-byte
+// (see watch_test.ts) — that is the load-bearing back-compat AC.
 //
 // Faithful port of the original id-watermark loop: silent baseline (adopt the
 // current max id in scope, no replay) unless --since is given (replays existing
@@ -19,22 +23,78 @@
 // the Monitor turns each stdout line into a notification:
 //   MAIL #<id> [<project>] <ts>: <subject>
 
-import { type MailboxEntry, snapshotMailbox, type SnapshotResult } from "../core/mailbox.ts";
-import { ExitCode } from "../core/exit.ts";
+import {
+  listInboxSlugs,
+  type MailboxEntry,
+  type MailWatchScope,
+  snapshotMailbox,
+  type SnapshotResult,
+} from "../core/mailbox.ts";
+import { AppError, ExitCode } from "../core/exit.ts";
 import { sleep } from "../core/sleep.ts";
 
 export interface WatchOptions {
   agent: string;
   /** Mailbox repo root (already resolved to an absolute path). */
   root: string;
-  /** Project slug to watch — single project only (see module doc). */
-  slug: string;
+  /** Project slugs to watch, in scope simultaneously (>= 1; see module doc). */
+  slugs: string[];
   /** Emit id > since; existing mail above `since` IS replayed once at startup.
    *  Undefined => adopt the current max silently (only post-launch mail shown). */
   since?: number;
   /** Seconds between polls, >= 1. */
   interval: number;
   signal: AbortSignal;
+}
+
+export interface ScopeResolveOptions {
+  scope: MailWatchScope;
+  /** Mailbox repo root (already resolved to an absolute path). */
+  root: string;
+  agent: string;
+  /** The caller's own project slug — the "project" scope target. */
+  projectSlug: string;
+  /** $MAIL_PRODUCT, when scope === "product" (unused by the current stub). */
+  productKey?: string;
+}
+
+/**
+ * Resolve `MAIL_WATCH_SCOPE` into the slug set `runWatch` should poll:
+ *   - "project": exactly `[projectSlug]` — byte-identical to T1's
+ *     single-project behavior (the load-bearing back-compat AC).
+ *   - "all": every `projects/<slug>` dir under `root` with an inbox for
+ *     `agent` (mailbox.ts `listInboxSlugs`) — cross-project, FS-only, no
+ *     `am`/SQLite involved.
+ *   - "product": DEFERRED (tcp-p0x.16.2 non-goal). Resolving a product KEY to
+ *     its linked project slugs from the FS layout alone is non-trivial (the
+ *     link lives in `am`, not on disk) — rather than silently degrading to
+ *     "project" or "all", this throws loud. Cross-project-via-product mail
+ *     already has a shipped path today: the `agent-mail product` command /
+ *     `$AGENT_MAIL_PRODUCT` in `monitor` (core/am.ts `productsInbox`,
+ *     SQLite-backed but verified non-consuming) — use that until FS-backend
+ *     product scope lands as its own follow-up.
+ */
+export async function resolveScopeSlugs(opts: ScopeResolveOptions): Promise<string[]> {
+  const { scope, root, agent, projectSlug, productKey } = opts;
+  switch (scope) {
+    case "project":
+      return [projectSlug];
+    case "all":
+      return await listInboxSlugs(root, agent);
+    case "product":
+      throw new AppError(
+        ExitCode.USAGE,
+        "MAIL_WATCH_SCOPE=product is not yet implemented for the FS watch backend " +
+          "(tcp-p0x.16.2 non-goal: resolving a product key to linked project slugs " +
+          "from the FS mailbox layout alone is non-trivial link discovery). " +
+          "Cross-project-via-product mail already has a shipped path today: run the " +
+          "'agent-mail product' command, or set $AGENT_MAIL_PRODUCT for the 'monitor' " +
+          "entrypoint (uses the SQLite product bus, verified non-consuming) instead." +
+          (productKey
+            ? ` ($MAIL_PRODUCT='${productKey}' was read but is unused by this scope.)`
+            : " ($MAIL_PRODUCT is also unset.)"),
+      );
+  }
 }
 
 const SKIP_WARN_THRESHOLD = 1; // one skipped(unparseable) file is worth a loud line
@@ -54,7 +114,7 @@ function maxId(entries: MailboxEntry[]): number {
  * keeps polling. Always returns ExitCode.OK on graceful shutdown.
  */
 export async function runWatch(opts: WatchOptions): Promise<number> {
-  const { agent, root, slug, interval, signal } = opts;
+  const { agent, root, slugs, interval, signal } = opts;
   let last: number | undefined = opts.since; // high-water; undefined until baselined
   let warnedMissing = false;
   let warnedSkips = false;
@@ -62,7 +122,7 @@ export async function runWatch(opts: WatchOptions): Promise<number> {
   while (!signal.aborted) {
     let snap: SnapshotResult;
     try {
-      snap = await snapshotMailbox(root, [slug], agent);
+      snap = await snapshotMailbox(root, slugs, agent);
     } catch (e) {
       if (signal.aborted) break;
       // snapshotMailbox is documented never-throw; treat an unexpected throw as
@@ -89,12 +149,16 @@ export async function runWatch(opts: WatchOptions): Promise<number> {
       warnedSkips = true;
     }
 
-    // A wholly-absent inbox dir is the misconfig/empty case — a fresh identity
-    // with no mail yet is a legitimate steady state, so warn once and keep
-    // polling. This is NOT a first-poll-failed condition (no exit 4 here).
-    if (snap.missingDirs.length > 0 && !warnedMissing) {
+    // ALL in-scope inbox dirs absent is the misconfig/empty case — a fresh
+    // identity with no mail yet is a legitimate steady state, so warn once and
+    // keep polling. This is NOT a first-poll-failed condition (no exit 4
+    // here). A PARTIAL miss (some slugs present, some not — routine under
+    // scope=all) is not warned: the present slugs are genuinely being tailed.
+    // Single-slug wording is byte-identical to T1 (the back-compat AC).
+    if (snap.missingDirs.length === slugs.length && !warnedMissing) {
+      const slugLabel = slugs.length === 1 ? `'${slugs[0]}'` : `[${slugs.join(", ")}]`;
       console.log(
-        `agent-mail-monitor: no mailbox inbox dir found under '${root}' for '${slug}'/'${agent}' — no mail yet, or a misconfigured root/agent/project. Staying live.`,
+        `agent-mail-monitor: no mailbox inbox dir found under '${root}' for ${slugLabel}/'${agent}' — no mail yet, or a misconfigured root/agent/project. Staying live.`,
       );
       warnedMissing = true;
     }

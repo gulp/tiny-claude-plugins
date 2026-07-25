@@ -74,6 +74,51 @@ export function inboxDir(root: string, slug: string, agent: string): string {
   return `${root}/projects/${slug}/agents/${agent}/inbox`;
 }
 
+// --- MAIL_WATCH_SCOPE (tcp-p0x.16.2) ----------------------------------------
+//
+// `project` = today's single-project behavior (exactly one slug, the caller's
+// own project — resolved by the CLI layer, not here). `all` = every project
+// slug under `root/projects/` that has an inbox dir for `agent` (glob below).
+// `product` is a recognized value but its slug set is NOT resolved by this
+// module — see ../commands/watch.ts `resolveScopeSlugs` for why (deferred,
+// tcp-p0x.16.2 non-goal: FS-layout-only product-link discovery is non-trivial).
+
+export type MailWatchScope = "project" | "all" | "product";
+
+const MAIL_WATCH_SCOPES: readonly MailWatchScope[] = ["project", "all", "product"];
+
+/** Type guard: is `v` one of the recognized MAIL_WATCH_SCOPE values? */
+export function isMailWatchScope(v: string): v is MailWatchScope {
+  return (MAIL_WATCH_SCOPES as readonly string[]).includes(v);
+}
+
+/**
+ * The "all" scope glob: every `root/projects/<slug>` dir that has an
+ * `agents/<agent>/inbox` subdir — i.e. every project this identity has ever
+ * received mail in. Read-only, never throws: an unreadable/absent
+ * `root/projects` (misconfigured root, or a brand-new mailbox) yields `[]`
+ * rather than an error, matching `snapshotMailbox`'s never-throw contract.
+ * Sorted for deterministic output.
+ */
+export async function listInboxSlugs(root: string, agent: string): Promise<string[]> {
+  const projectsDir = `${root}/projects`;
+  let listing: Deno.DirEntry[] = [];
+  try {
+    for await (const e of Deno.readDir(projectsDir)) listing.push(e);
+  } catch {
+    return [];
+  }
+  const slugs: string[] = [];
+  for (const e of listing) {
+    if (!e.isDirectory) continue;
+    if (await dirExists(`${projectsDir}/${e.name}/agents/${agent}/inbox`)) {
+      slugs.push(e.name);
+    }
+  }
+  slugs.sort();
+  return slugs;
+}
+
 /**
  * Parse a mailbox filename `<ts>__<subject>__<id>.md` into (ts, subject, id).
  * Returns null when it does not match (not an id-bearing message file) — the

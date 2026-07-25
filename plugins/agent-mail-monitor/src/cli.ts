@@ -7,12 +7,17 @@
 // only the watch loop, envelopes, and (later) product mode + introspection.
 
 import { Command, CommanderError, InvalidArgumentError } from "commander";
-import { runWatch } from "./commands/watch.ts";
+import { resolveScopeSlugs, runWatch } from "./commands/watch.ts";
 import { runProductWatch } from "./commands/product.ts";
 import { resolveSlugs, runShadow } from "./commands/shadow.ts";
 import { runDoctor } from "./commands/doctor.ts";
 import { runCapabilities, runSchema } from "./commands/introspect.ts";
-import { defaultMailboxRoot, slugForProject } from "./core/mailbox.ts";
+import {
+  defaultMailboxRoot,
+  isMailWatchScope,
+  type MailWatchScope,
+  slugForProject,
+} from "./core/mailbox.ts";
 import { AppError, ExitCode } from "./core/exit.ts";
 
 // --- graceful shutdown: one AbortController kills the `am` child AND ends the
@@ -79,6 +84,23 @@ function resolveProject(explicit: string | undefined, globalCwd: string | undefi
   return explicit ?? globalCwd ?? Deno.env.get("CLAUDE_PROJECT_DIR") ?? Deno.cwd();
 }
 
+// $MAIL_WATCH_SCOPE (tcp-p0x.16.2) — env-only, read by the `monitor` entrypoint
+// (mirrors AGENT_MAIL_PRODUCT / MAIL_POLL_INTERVAL, both already env-driven
+// there). The explicit `watch` subcommand stays flag-driven and single-project;
+// it never reads this var, so it has nothing new to regress. Unset defaults to
+// "project" — byte-identical to pre-tcp-p0x.16.2 behavior. An invalid value
+// fails LOUD (stdout + non-zero exit), never a silent fallback to "project".
+function resolveWatchScopeEnv(): MailWatchScope {
+  const raw = Deno.env.get("MAIL_WATCH_SCOPE") ?? "project";
+  if (!isMailWatchScope(raw)) {
+    console.log(
+      `agent-mail-monitor: MAIL_WATCH_SCOPE='${raw}' is invalid — must be one of: project, all, product.`,
+    );
+    Deno.exit(ExitCode.USAGE);
+  }
+  return raw;
+}
+
 function buildProgram(): Command {
   const program = new Command();
   program
@@ -114,7 +136,7 @@ function buildProgram(): Command {
       const code = await runWatch({
         agent: opts.agent,
         root: opts.root ?? defaultMailboxRoot(),
-        slug: slugForProject(project),
+        slugs: [slugForProject(project)],
         since: opts.since,
         interval: opts.interval,
         signal: shutdown.signal,
@@ -202,7 +224,7 @@ function buildProgram(): Command {
   program
     .command("monitor")
     .description(
-      "Monitor entrypoint: read AGENT_NAME / CLAUDE_PROJECT_DIR / MAIL_POLL_INTERVAL from env, then watch.",
+      "Monitor entrypoint: read AGENT_NAME / CLAUDE_PROJECT_DIR / MAIL_POLL_INTERVAL / MAIL_WATCH_SCOPE from env, then watch.",
     )
     .action(async () => {
       const g = program.opts();
@@ -224,22 +246,48 @@ function buildProgram(): Command {
         );
         Deno.exit(ExitCode.USAGE);
       }
-      // $AGENT_MAIL_PRODUCT set -> watch the cross-project bus; else single project.
+      // $AGENT_MAIL_PRODUCT set -> watch the cross-project SQLite product bus
+      // (existing path, unrelated to MAIL_WATCH_SCOPE — that env only scopes
+      // the FS backend's slug set below, and is not consulted here).
       const product = Deno.env.get("AGENT_MAIL_PRODUCT");
-      const code = product
-        ? await runProductWatch({
+      if (product) {
+        const code = await runProductWatch({
           productKey: product,
           agent,
           interval: Number(rawInterval),
           signal: shutdown.signal,
-        })
-        : await runWatch({
-          agent,
-          root: defaultMailboxRoot(),
-          slug: slugForProject(resolveProject(undefined, g.cwd)),
-          interval: Number(rawInterval),
-          signal: shutdown.signal,
         });
+        Deno.exit(code);
+      }
+
+      // FS backend — MAIL_WATCH_SCOPE picks the slug set. Default "project" is
+      // exactly [projectSlug], byte-identical to pre-tcp-p0x.16.2 behavior.
+      const scope = resolveWatchScopeEnv();
+      const root = defaultMailboxRoot();
+      const projectSlug = slugForProject(resolveProject(undefined, g.cwd));
+      let slugs: string[];
+      try {
+        slugs = await resolveScopeSlugs({
+          scope,
+          root,
+          agent,
+          projectSlug,
+          productKey: Deno.env.get("MAIL_PRODUCT") ?? undefined,
+        });
+      } catch (e) {
+        if (e instanceof AppError) {
+          console.log(`agent-mail-monitor: ${e.message}`);
+          Deno.exit(e.code);
+        }
+        throw e;
+      }
+      const code = await runWatch({
+        agent,
+        root,
+        slugs,
+        interval: Number(rawInterval),
+        signal: shutdown.signal,
+      });
       Deno.exit(code);
     });
 

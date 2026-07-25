@@ -1,17 +1,30 @@
-// Integration test for the single-project watch loop (tcp-p0x.16.1).
+// Integration test for the watch loop (tcp-p0x.16.1 single-project promotion +
+// tcp-p0x.16.2 MAIL_WATCH_SCOPE multi-slug support).
 //
 // Drives runWatch against a REAL temp mailbox tree on disk (no fake `am` needed
 // now that the backend is `snapshotMailbox`, not check-inbox). Asserts the
-// promotion's acceptance criteria:
+// tcp-p0x.16.1 acceptance criteria:
 //   1. a watermark seeded at arm time suppresses replay of pre-existing mail;
 //   2. a new .md file that appears after arm fires exactly once;
 //   3. a missing/empty inbox arms cleanly (no throw, exits OK on shutdown).
+// ...and the tcp-p0x.16.2 acceptance criteria:
+//   4. MAIL_WATCH_SCOPE unset/"project" reproduces (1)-(3) exactly — a
+//      single-element `slugs` array is byte-identical to the old singular
+//      `slug` field (asserted implicitly: every test above now passes
+//      `slugs: [slug]` and still passes unchanged);
+//   5. runWatch tailing MULTIPLE slugs (what scope=all resolves to) fires for
+//      a new message in EITHER project, not just the first;
+//   6. resolveScopeSlugs: "project" -> [projectSlug]; "all" -> every inbox dir
+//      for the agent (delegates to mailbox.ts listInboxSlugs); "product" ->
+//      throws AppError(USAGE) rather than silently falling back (deferred,
+//      tcp-p0x.16.2 non-goal).
 //
 // Run: deno test --allow-read --allow-write --allow-env src/commands/watch_test.ts
 
-import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
-import { runWatch } from "./watch.ts";
-import { inboxDir } from "../core/mailbox.ts";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
+import { resolveScopeSlugs, runWatch } from "./watch.ts";
+import { inboxDir, listInboxSlugs } from "../core/mailbox.ts";
+import { AppError, ExitCode } from "../core/exit.ts";
 
 async function writeMsg(dir: string, name: string): Promise<void> {
   await Deno.mkdir(dir, { recursive: true });
@@ -44,7 +57,7 @@ Deno.test("watch: seeded watermark suppresses replay; a new file fires exactly o
 
     const ac = new AbortController();
     const lines = await captureLog(async () => {
-      const done = runWatch({ agent, root, slug, interval: 1, signal: ac.signal });
+      const done = runWatch({ agent, root, slugs: [slug], interval: 1, signal: ac.signal });
 
       // Let the baseline poll happen — pre-existing id=10 must not be emitted.
       await new Promise((r) => setTimeout(r, 1200));
@@ -88,7 +101,14 @@ Deno.test("watch: --since replays existing mail above the id once, at startup on
 
     const ac = new AbortController();
     const lines = await captureLog(async () => {
-      const done = runWatch({ agent, root, slug, since: 10, interval: 1, signal: ac.signal });
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slug],
+        since: 10,
+        interval: 1,
+        signal: ac.signal,
+      });
       // First poll replays anything with id > 10 once (id=15).
       await new Promise((r) => setTimeout(r, 1200));
       // A second poll with nothing new must not re-emit id=15.
@@ -119,7 +139,7 @@ Deno.test("watch: missing/empty inbox arms cleanly, no throw, exits OK", async (
       const done = runWatch({
         agent: "Nobody",
         root,
-        slug: "proj-missing",
+        slugs: ["proj-missing"],
         interval: 1,
         signal: ac.signal,
       });
@@ -135,5 +155,161 @@ Deno.test("watch: missing/empty inbox arms cleanly, no throw, exits OK", async (
     );
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+// --- tcp-p0x.16.2: MAIL_WATCH_SCOPE=all — runWatch over multiple slugs -------
+
+Deno.test("watch: scope=all (multiple slugs) fires for a new message in EITHER project", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-all-test-" });
+  const agent = "Tester";
+  const slugA = "proj-a";
+  const slugB = "proj-b";
+  const dirA = `${inboxDir(root, slugA, agent)}/2026/07`;
+  const dirB = `${inboxDir(root, slugB, agent)}/2026/07`;
+
+  try {
+    // Pre-existing mail in BOTH projects before arm — neither must replay.
+    await writeMsg(dirA, "2026-07-24T10-00-00Z__old-a__10.md");
+    await writeMsg(dirB, "2026-07-24T10-00-00Z__old-b__11.md");
+
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slugA, slugB],
+        interval: 1,
+        signal: ac.signal,
+      });
+
+      // Baseline poll — pre-existing ids 10/11 must not be emitted.
+      await new Promise((r) => setTimeout(r, 1200));
+
+      // A new message in project B (not the first slug) must still fire.
+      await writeMsg(dirB, "2026-07-24T11-00-00Z__fresh-b__21.md");
+      await new Promise((r) => setTimeout(r, 1200));
+
+      // A new message in project A must ALSO fire (both slugs stay live).
+      await writeMsg(dirA, "2026-07-24T11-05-00Z__fresh-a__22.md");
+      await new Promise((r) => setTimeout(r, 1200));
+
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(
+      mailLines.length,
+      2,
+      `expected exactly 2 MAIL lines, got: ${JSON.stringify(mailLines)}`,
+    );
+    assert(mailLines.some((l) => l.includes("#21") && l.includes("[proj-b]")));
+    assert(mailLines.some((l) => l.includes("#22") && l.includes("[proj-a]")));
+    assert(
+      !mailLines.some((l) => l.includes("#10") || l.includes("#11")),
+      "pre-existing mail in either project must not be replayed at arm",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("watch: scope=all does not warn 'missing' when only SOME slugs have an inbox", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-partial-test-" });
+  const agent = "Tester";
+  const slugA = "proj-partial-a";
+  const slugB = "proj-partial-b"; // deliberately never created
+  const dirA = `${inboxDir(root, slugA, agent)}/2026/07`;
+
+  try {
+    await writeMsg(dirA, "2026-07-24T10-00-00Z__seed__1.md");
+
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slugA, slugB],
+        interval: 1,
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+      ac.abort();
+      await done;
+    });
+
+    assert(
+      !lines.some((l) => l.includes("no mailbox inbox dir found")),
+      "a partial miss (one slug present) must not be treated as the misconfig/empty case",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// --- tcp-p0x.16.2: resolveScopeSlugs -----------------------------------------
+
+Deno.test("resolveScopeSlugs: 'project' resolves to exactly [projectSlug]", async () => {
+  const slugs = await resolveScopeSlugs({
+    scope: "project",
+    root: "/does/not/matter",
+    agent: "Tester",
+    projectSlug: "home-gulp-my-proj",
+  });
+  assertEquals(slugs, ["home-gulp-my-proj"]);
+});
+
+Deno.test("resolveScopeSlugs: 'all' delegates to mailbox.ts listInboxSlugs", async () => {
+  const root = await Deno.makeTempDir({ prefix: "resolve-all-test-" });
+  const agent = "Tester";
+  try {
+    await writeMsg(`${inboxDir(root, "proj-1", agent)}/2026/07`, "2026-07-24T10-00-00Z__x__1.md");
+    await writeMsg(`${inboxDir(root, "proj-2", agent)}/2026/07`, "2026-07-24T10-00-00Z__y__2.md");
+    // A different agent's inbox must NOT leak into this agent's "all" scope.
+    await writeMsg(
+      `${inboxDir(root, "proj-3", "OtherAgent")}/2026/07`,
+      "2026-07-24T10-00-00Z__z__3.md",
+    );
+
+    const [viaResolve, viaMailbox] = await Promise.all([
+      resolveScopeSlugs({ scope: "all", root, agent, projectSlug: "unused" }),
+      listInboxSlugs(root, agent),
+    ]);
+
+    assertEquals(viaResolve, ["proj-1", "proj-2"]);
+    assertEquals(
+      viaResolve,
+      viaMailbox,
+      "resolveScopeSlugs('all') must match listInboxSlugs exactly",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("resolveScopeSlugs: 'product' is a loud deferred stub, not a silent fallback", async () => {
+  await assertRejects(
+    () =>
+      resolveScopeSlugs({
+        scope: "product",
+        root: "/does/not/matter",
+        agent: "Tester",
+        projectSlug: "home-gulp-my-proj",
+        productKey: "my-product",
+      }),
+    AppError,
+  );
+  try {
+    await resolveScopeSlugs({
+      scope: "product",
+      root: "/does/not/matter",
+      agent: "Tester",
+      projectSlug: "home-gulp-my-proj",
+    });
+    throw new Error("expected resolveScopeSlugs to throw for scope=product");
+  } catch (e) {
+    assert(e instanceof AppError);
+    assertEquals(e.code, ExitCode.USAGE);
   }
 });
