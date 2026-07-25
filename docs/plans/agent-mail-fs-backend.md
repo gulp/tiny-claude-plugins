@@ -134,8 +134,18 @@ Starting leaf: **T1**. T2, T4, T5 gate on T1; T3 gates on T2; T6 gates on T4.
 ## Not yet specified
 - `product` mode's exact config surface (link discovery vs explicit `MAIL_PRODUCT`).
   Ticketed as part of T2 but may split if link-discovery is non-trivial.
-- Whether `watch-mail.sh` (the bash path) is ported to the FS backend or deprecated
-  in favor of the Deno `cli.ts` path. Decide during T4.
+
+## Decided
+- **`watch-mail.sh` (the bash path): DEPRECATED in place, not ported.** (tcp-ald,
+  2026-07-25.) T4 landed without resolving this (correctly parked as its own
+  decision); by the time it was picked up, `monitors/monitors.json` already armed
+  only the Deno `src/cli.ts monitor` entrypoint and the `toggle` skill (tcp-p0x.3)
+  already pointed users at it — nothing live referenced `watch-mail.sh` anymore.
+  Porting would mean maintaining a second, hand-rolled FS-mailbox parser in bash
+  alongside the tested Deno one for no user-facing benefit. `watch-mail.sh` is
+  left on disk (dcg blocks `rm` under `/home`; physical removal is human-only)
+  with a strengthened DEPRECATED header/usage notice — it still shells out to
+  `am check-inbox` and still consumes if invoked by hand.
 
 ## Out of scope
 - Upstream am `peek`/`--no-mark` mode (separate am issue).

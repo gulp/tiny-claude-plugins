@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# watch-mail.sh — emit one line per NEW Agent Mail message.
+# watch-mail.sh — DEPRECATED legacy watch path. emit one line per NEW Agent Mail
+# message by polling `am check-inbox`.
 #
-# Polls `am check-inbox --json` and prints a line for every message whose id
-# exceeds a running high-water mark. CONSUMPTION WARNING: `am check-inbox`
-# without `--direct` is NOT read-only when the am daemon is up (the default) —
-# it routes through the server's fetch_inbox, which MARKS RETURNED MESSAGES READ
-# (verified against am v0.3.21). So this watch consumes: a message it reports is
-# marked read, and a later fetch_inbox(unread_only) will not re-surface it. The
-# fix is to poll the append-only canonical git-mailbox on disk instead (see
-# src/core/mailbox.ts + the plugin beads); until then, treat the notification as
-# the delivery.
+# DEPRECATED (tcp-ald, decided 2026-07-25): superseded by the Deno CLI's watch
+# path (`deno run … src/cli.ts monitor` / `watch`), which reads the append-only
+# canonical git-mailbox on disk (src/core/mailbox.ts `snapshotMailbox`) and is
+# genuinely non-consuming. That is what `monitors/monitors.json` actually arms
+# and what the `toggle` skill documents — nothing in this plugin auto-arms this
+# script anymore. It is left in place (not deleted) only for anyone who still
+# invokes it by hand; do not point new tooling, docs, or skills at it.
+#
+# Still CONSUMES — this deprecation does not fix that, it routes around it:
+# `am check-inbox` without `--direct` is NOT read-only when the am daemon is up
+# (the default) — it routes through the server's fetch_inbox, which MARKS
+# RETURNED MESSAGES READ (verified against am v0.3.21). So this watch consumes:
+# a message it reports is marked read, and a later fetch_inbox(unread_only) will
+# not re-surface it. Use the Deno path above instead.
 #
 # Designed to be the `command` of a persistent Monitor: each printed stdout line
 # becomes one notification; the process loops until killed (TaskStop / session
@@ -38,7 +44,13 @@ FAIL_WARN_THRESHOLD=3   # consecutive transient failures before one loud warning
 
 usage() {
 	cat <<'EOF'
-watch-mail.sh — emit one line per NEW Agent Mail message. NOT read-only.
+watch-mail.sh — DEPRECATED legacy watch path. NOT read-only.
+
+DEPRECATED: superseded by the Deno CLI's `watch` / `monitor` commands
+(src/cli.ts), which tail the durable git-mailbox on disk instead and are
+genuinely non-consuming. That Deno path is what `monitors/monitors.json`
+actually arms and what the `toggle` skill documents — use it instead. This
+script is kept only for manual/back-compat invocation; nothing auto-arms it.
 
 CONSUMPTION WARNING: polls `am check-inbox --json`, which — without `--direct`,
 whenever the am daemon is up (the default, and what this script passes) —
@@ -46,9 +58,7 @@ routes through the server's fetch_inbox and MARKS RETURNED MESSAGES READ
 (verified against am v0.3.21). So a message this script reports is marked read:
 a later fetch_inbox(unread_only) will not re-surface it. Treat the notification
 itself as the delivery. Prints a line for every message whose id exceeds a
-running high-water mark. This is the legacy bash path; the Deno CLI's `watch` /
-`monitor` commands (src/cli.ts) tail the durable git-mailbox on disk instead and
-are genuinely non-consuming — prefer those.
+running high-water mark.
 
 Usage:
   watch-mail.sh --agent <NAME> [--project <PATH>] [--since <ID>] [--interval <SEC>]
