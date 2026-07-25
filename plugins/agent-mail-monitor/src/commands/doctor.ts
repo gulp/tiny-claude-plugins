@@ -6,6 +6,7 @@
 // <bad-key>` hangs) can't wedge the diagnostic.
 
 import { agentsInProject, amPresent, productStatusProjects } from "../core/am.ts";
+import type { AgentSummary } from "../core/am.ts";
 import { defaultMailboxRoot, slugForProject } from "../core/mailbox.ts";
 import { checkDesync } from "./shadow.ts";
 import { err, ok, printEnvelope } from "../core/envelope.ts";
@@ -23,6 +24,51 @@ interface Check {
 // Per-`am`-call ceiling for the product gap check. Bounds a hanging `am` so
 // doctor always terminates; each linked project gets its own budget.
 const AM_TIMEOUT_MS = 5000;
+
+/** Human-readable "name (model, last active TS)" — degrades gracefully when
+ *  `am` didn't report model/last-active for a row. */
+function describeAgent(a: AgentSummary): string {
+  return `${a.name} (${a.model ?? "model unknown"}, last active ${a.lastActiveTs ?? "unknown"})`;
+}
+
+/**
+ * When AGENT_NAME is unset, list identities already registered in THIS
+ * project so the user/agent can REUSE one instead of minting a new one —
+ * minting fresh mints a new EMPTY mailbox and orphans any reservations the
+ * old identity held (tcp-p0x.4). Read-only: never registers or picks on the
+ * caller's behalf, just surfaces the candidates. Stays a warning, never a
+ * doctor failure — `decide()` already treats an unset identity as non-fatal;
+ * this only enriches that warning's detail. No-op signal (returns null) when
+ * an identity is already set.
+ */
+async function identityPickHint(
+  agent: string | undefined,
+  projectKey: string,
+): Promise<{ detail: string; candidates: AgentSummary[] } | null> {
+  if (agent) return null;
+
+  const result = await agentsInProject(projectKey, AbortSignal.timeout(AM_TIMEOUT_MS));
+  if (!result.ok) {
+    return {
+      detail:
+        `AGENT_NAME unset — could not list existing identities in this project (${result.error})`,
+      candidates: [],
+    };
+  }
+  if (result.agents.length === 0) {
+    return {
+      detail:
+        "AGENT_NAME unset — no identities registered yet in this project; mint a new adjective+noun",
+      candidates: [],
+    };
+  }
+  return {
+    detail: `AGENT_NAME unset — reuse one of these, or mint a new adjective+noun: ${
+      result.agents.map(describeAgent).join("; ")
+    }`,
+    candidates: result.agents,
+  };
+}
 
 /**
  * When AGENT_MAIL_PRODUCT is set, verify `agent` is registered in every linked
@@ -265,12 +311,18 @@ function decide(
 export async function runDoctor(opts: DoctorOptions): Promise<number> {
   const agent = Deno.env.get("AGENT_NAME");
   const root = defaultMailboxRoot();
+  // "This project", for both the identity-pick hint below and desyncCheck's
+  // internal slug resolution — same precedence (CLAUDE_PROJECT_DIR, else cwd).
+  const projectKey = Deno.env.get("CLAUDE_PROJECT_DIR") ?? Deno.cwd();
   const checks: Record<string, Check> = {
     deno: { ok: true, detail: Deno.version.deno },
     am: { ok: await amPresent(), detail: "am on PATH" },
     identity: { ok: !!agent, detail: agent ?? "(unset)" },
     mailbox: await mailboxLayoutCheck(root),
   };
+
+  const identityPick = await identityPickHint(agent, projectKey);
+  if (identityPick) checks.identity = { ok: false, detail: identityPick.detail };
 
   const product = await productRegistrationCheck(agent);
   if (product) checks.product = product.check;
@@ -284,6 +336,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   if (opts.json) {
     const data = {
       checks,
+      ...(identityPick ? { identityCandidates: identityPick.candidates } : {}),
       ...(product
         ? { product: { missing: product.missing, unverifiable: product.unverifiable } }
         : {}),

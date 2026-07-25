@@ -350,9 +350,28 @@ export interface LinkedProject {
   label: string;
 }
 
-/** `am agents list` row — only the identity name matters for the gap check. */
-const AgentRowSchema = z.object({ name: z.string().nullish() }).passthrough();
+/**
+ * `am agents list` row. `name` alone drives the product-registration-gap
+ * check; `model`/`last_active_ts` are carried too so the identity-pick hint
+ * (tcp-p0x.4 — "which of these should I reuse?") can show more than a bare
+ * name. All optional/nullish: a row missing either just degrades to "unknown"
+ * in the hint rather than failing the parse.
+ */
+const AgentRowSchema = z
+  .object({
+    name: z.string().nullish(),
+    model: z.string().nullish(),
+    last_active_ts: z.string().nullish(),
+  })
+  .passthrough();
 const AgentListSchema = z.array(AgentRowSchema);
+
+/** One registered identity, trimmed to what the identity-pick hint shows. */
+export interface AgentSummary {
+  name: string;
+  model: string | null;
+  lastActiveTs: string | null;
+}
 
 /**
  * Pull the linked-project array out of a tolerant `products status` body: a bare
@@ -413,35 +432,55 @@ export async function productStatusProjects(
 }
 
 /**
- * Registered identity names in one project. `{ ok:false }` (loud) on any am
+ * Registered identities in one project. `names` (back-compat, used by the
+ * product registration-gap check) plus `agents` (model/last-active included,
+ * used by the identity-pick hint — tcp-p0x.4). `{ ok:false }` (loud) on any am
  * failure or a non-JSON/unexpected body. Never throws.
  */
 export async function agentsInProject(
   projectKey: string,
   signal?: AbortSignal,
-): Promise<{ ok: boolean; names: string[]; error?: string }> {
+): Promise<{ ok: boolean; names: string[]; agents: AgentSummary[]; error?: string }> {
   let res: AmResult;
   try {
     res = await runAm(["agents", "list", "--project", projectKey, "--json"], { signal });
   } catch (e) {
-    return { ok: false, names: [], error: amErrorMessage(e) };
+    return { ok: false, names: [], agents: [], error: amErrorMessage(e) };
   }
   if (res.code !== 0) {
-    return { ok: false, names: [], error: res.stderr.trim() || `am exited ${res.code}` };
+    return {
+      ok: false,
+      names: [],
+      agents: [],
+      error: res.stderr.trim() || `am exited ${res.code}`,
+    };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(res.stdout);
   } catch {
-    return { ok: false, names: [], error: "agents list did not return JSON" };
+    return { ok: false, names: [], agents: [], error: "agents list did not return JSON" };
   }
   const check = AgentListSchema.safeParse(parsed);
   if (!check.success) {
-    return { ok: false, names: [], error: `unexpected agents list shape: ${check.error.message}` };
+    return {
+      ok: false,
+      names: [],
+      agents: [],
+      error: `unexpected agents list shape: ${check.error.message}`,
+    };
   }
-  const names = check.data.map((a) => a.name).filter((n): n is string => typeof n === "string");
-  return { ok: true, names };
+  const agents = check.data
+    .filter((a): a is { name: string; model?: string | null; last_active_ts?: string | null } =>
+      typeof a.name === "string"
+    )
+    .map((a) => ({
+      name: a.name,
+      model: a.model ?? null,
+      lastActiveTs: a.last_active_ts ?? null,
+    }));
+  return { ok: true, names: agents.map((a) => a.name), agents };
 }
 
 /** Normalize a caught am error (AppError, abort/timeout, or anything) to a string. */

@@ -33,6 +33,8 @@ if [ "$1" = "agents" ] && [ "$2" = "list" ]; then
     echo '[{"name":"TestBot"},{"name":"Root"}]'
   elif [ "$4" = "beta" ]; then
     echo '[{"name":"Root"}]'
+  elif [ "$4" = "identity-pick-project" ]; then
+    echo '[{"name":"PinkGlen","model":"claude-opus-4-8","last_active_ts":"2026-07-25T08:06:44Z"},{"name":"CrimsonBear","model":"claude-sonnet-5","last_active_ts":"2026-07-25T04:06:56Z"}]'
   else
     echo '[]'
   fi
@@ -209,6 +211,92 @@ Deno.test("doctor desync check: off by default (no AGENT_MAIL_DESYNC_CHECK, no '
         assert(!("desync" in checks), "desync must be opt-in — never runs unless explicitly asked");
       } finally {
         Deno.env.delete("AGENT_NAME");
+      }
+    });
+  });
+});
+
+// --- tcp-p0x.4: identity-pick hint (AGENT_NAME unset -> list who's already
+// registered in THIS project, so the user reuses one instead of minting a
+// new empty mailbox) -----------------------------------------------------
+
+Deno.test("doctor identity-pick: AGENT_NAME unset lists existing identities in this project", async () => {
+  await withFakeAm(async () => {
+    await withWellFormedMailboxRoot(async () => {
+      const prevProj = Deno.env.get("CLAUDE_PROJECT_DIR");
+      Deno.env.set("CLAUDE_PROJECT_DIR", "identity-pick-project");
+      try {
+        const { lines, ret } = await capture(() => runDoctor({ json: true }));
+        assertEquals(ret, ExitCode.OK, "an unset identity stays a warning, never fails doctor");
+        const env = JSON.parse(lines.join("\n")) as Record<string, unknown>;
+        const checks = (env.data as Record<string, unknown>).checks as Record<string, unknown>;
+        const identity = checks.identity as Record<string, unknown>;
+        assertEquals(identity.ok, false);
+        assertStringIncludes(identity.detail as string, "PinkGlen");
+        assertStringIncludes(identity.detail as string, "CrimsonBear");
+        assertStringIncludes(identity.detail as string, "reuse one of these");
+
+        const candidates = (env.data as Record<string, unknown>).identityCandidates as Array<
+          Record<string, unknown>
+        >;
+        assertEquals(candidates.length, 2);
+        assertEquals(candidates[0].name, "PinkGlen");
+        assertEquals(candidates[0].model, "claude-opus-4-8");
+
+        const human = await capture(() => runDoctor({ json: false }));
+        const identityLine = human.lines.find((l) => l.includes("identity"));
+        assert(identityLine, "expected an identity line in human output");
+        assertStringIncludes(identityLine!, "PinkGlen");
+      } finally {
+        if (prevProj === undefined) Deno.env.delete("CLAUDE_PROJECT_DIR");
+        else Deno.env.set("CLAUDE_PROJECT_DIR", prevProj);
+      }
+    });
+  });
+});
+
+Deno.test("doctor identity-pick: AGENT_NAME unset + no identities yet says so, not a crash", async () => {
+  await withFakeAm(async () => {
+    await withWellFormedMailboxRoot(async () => {
+      const prevProj = Deno.env.get("CLAUDE_PROJECT_DIR");
+      Deno.env.set("CLAUDE_PROJECT_DIR", "nobody-registered-here");
+      try {
+        const { lines, ret } = await capture(() => runDoctor({ json: true }));
+        assertEquals(ret, ExitCode.OK);
+        const env = JSON.parse(lines.join("\n")) as Record<string, unknown>;
+        const checks = (env.data as Record<string, unknown>).checks as Record<string, unknown>;
+        assertStringIncludes(
+          (checks.identity as Record<string, unknown>).detail as string,
+          "no identities registered yet",
+        );
+        const candidates = (env.data as Record<string, unknown>).identityCandidates as unknown[];
+        assertEquals(candidates.length, 0);
+      } finally {
+        if (prevProj === undefined) Deno.env.delete("CLAUDE_PROJECT_DIR");
+        else Deno.env.set("CLAUDE_PROJECT_DIR", prevProj);
+      }
+    });
+  });
+});
+
+Deno.test("doctor identity-pick: AGENT_NAME set skips the hint entirely", async () => {
+  await withFakeAm(async () => {
+    await withWellFormedMailboxRoot(async () => {
+      Deno.env.set("AGENT_NAME", "TestBot");
+      Deno.env.set("CLAUDE_PROJECT_DIR", "identity-pick-project");
+      try {
+        const { lines, ret } = await capture(() => runDoctor({ json: true }));
+        assertEquals(ret, ExitCode.OK);
+        const env = JSON.parse(lines.join("\n")) as Record<string, unknown>;
+        assert(
+          !("identityCandidates" in (env.data as Record<string, unknown>)),
+          "no hint once an identity is set",
+        );
+        const checks = (env.data as Record<string, unknown>).checks as Record<string, unknown>;
+        assertEquals((checks.identity as Record<string, unknown>).ok, true);
+      } finally {
+        Deno.env.delete("AGENT_NAME");
+        Deno.env.delete("CLAUDE_PROJECT_DIR");
       }
     });
   });

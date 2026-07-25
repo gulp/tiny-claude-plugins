@@ -51,6 +51,21 @@ Read the `CHECK` table top to bottom. Right after step 1, expect:
 
 ## 3. Register a durable identity — `am agents register`
 
+**Check whether you should reuse one first.** A project often already has
+identities registered from earlier sessions or other agents — minting a new
+one mints a new **empty** mailbox and orphans anything the old identity held.
+List the candidates before deciding to mint fresh:
+
+```bash
+am agents list --project "$(pwd)"
+```
+
+If one of those is *yours* from a prior session, reuse its name verbatim
+below instead of generating a new one. Only mint fresh if none fits (a
+genuinely new agent, or a genuinely new project). The `agent-mail-monitor:doctor`
+skill runs this same lookup automatically whenever `AGENT_NAME` is unset — see
+step 5.
+
 ```bash
 am agents register \
   --project "$(pwd)" \
@@ -64,8 +79,9 @@ am agents register \
   directory are automatically the same project; a sibling repo is a
   different one.
 - **Name must be Adjective+Noun and non-descriptive** (`BlueLake`, not
-  `MigrationWorker`) — the server rejects role-descriptive names. If you
-  omit `--name` entirely, one is generated for you.
+  `MigrationWorker` — `BlueLake` here is just a format example, not a name to
+  assume is free or already registered) — the server rejects role-descriptive
+  names. If you omit `--name` entirely, one is generated for you.
 - **Reuse the returned name verbatim on every later wake**, this session and
   every future one in this repo. Re-omitting `--name` on a later run mints a
   *new* identity and silently orphans anything the old one held (mail,
@@ -95,7 +111,10 @@ problems early:
 
 - **`agent-mail-monitor:doctor`** — the plugin's own preflight skill: checks
   the `am` CLI, `jq`, server reachability, `am health`, the MCP declaration,
-  and `AGENT_NAME`, with a fix guide linked for each failure.
+  and `AGENT_NAME`, with a fix guide linked for each failure. When
+  `AGENT_NAME` is unset it also lists every identity already registered in
+  this project (name, model, last-active) so you can reuse one instead of
+  minting a new mailbox — the same check step 3 above points at.
 - The plugin's bundled CLI also exposes a narrower `doctor` command, useful
   in **product-bus** setups (`$AGENT_MAIL_PRODUCT` set) to catch a registered
   identity that's missing from a *linked* project — see
