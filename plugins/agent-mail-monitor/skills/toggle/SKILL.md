@@ -1,6 +1,6 @@
 ---
 name: toggle
-description: Turn the Agent Mail background monitor ON or OFF for the current session — arm or silence the read-only watch that notifies on each new Agent Mail message addressed to $AGENT_NAME. Use when asked to "silence/stop the mail monitor", "stop mail notifications", "start watching my inbox", "arm the agent-mail monitor", or when mail pings are unwanted (or wanted) this session without uninstalling the plugin.
+description: Turn the Agent Mail background monitor ON or OFF for the current session — arm or silence the watch that notifies on each new Agent Mail message addressed to $AGENT_NAME (the current check-inbox backend consumes — it marks polled mail read). Use when asked to "silence/stop the mail monitor", "stop mail notifications", "start watching my inbox", "arm the agent-mail monitor", or when mail pings are unwanted (or wanted) this session without uninstalling the plugin.
 ---
 
 # Toggle Agent Mail Monitor
@@ -53,7 +53,13 @@ two watches against different identities.
 
 ## Notes
 
-- **Read-only.** It polls `am check-inbox`, which does not mark messages read, so
-  toggling never consumes mail out from under a later `fetch_inbox`.
+- **The current backend CONSUMES.** It polls `am check-inbox`, which — without
+  `--direct`, whenever the am daemon is up (the default) — routes through the
+  server's `fetch_inbox` and **marks returned messages read** (verified against am
+  v0.3.21). So an armed monitor eats mail: a later `fetch_inbox(unread_only)` in
+  this or a peer session will not re-surface a message the monitor already reported.
+  Treat the notification itself as the delivery. A genuinely non-consuming FS-tail
+  backend (reads the append-only canonical git-mailbox on disk) is tracked in the
+  plugin beads.
 - **Disable everywhere** (all sessions), not just this one:
   `claude plugin uninstall agent-mail-monitor@tiny-claude-plugins`.

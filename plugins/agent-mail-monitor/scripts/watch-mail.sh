@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# watch-mail.sh — emit one line per NEW Agent Mail message, read-only.
+# watch-mail.sh — emit one line per NEW Agent Mail message.
 #
 # Polls `am check-inbox --json` and prints a line for every message whose id
-# exceeds a running high-water mark. Unlike the MCP fetch_inbox tool,
-# check-inbox does NOT mark messages read, so watching never consumes mail out
-# from under a later fetch_inbox/acknowledge_message.
+# exceeds a running high-water mark. CONSUMPTION WARNING: `am check-inbox`
+# without `--direct` is NOT read-only when the am daemon is up (the default) —
+# it routes through the server's fetch_inbox, which MARKS RETURNED MESSAGES READ
+# (verified against am v0.3.21). So this watch consumes: a message it reports is
+# marked read, and a later fetch_inbox(unread_only) will not re-surface it. The
+# fix is to poll the append-only canonical git-mailbox on disk instead (see
+# src/core/mailbox.ts + the plugin beads); until then, treat the notification as
+# the delivery.
 #
 # Designed to be the `command` of a persistent Monitor: each printed stdout line
 # becomes one notification; the process loops until killed (TaskStop / session
@@ -109,11 +114,20 @@ while :; do
 	# `am` exiting 0 with a non-JSON body (e.g. an HTML error) is a failure, not
 	# a silent no-op.
 	if out=$(am check-inbox --agent "$agent" --project "$project" --rate-limit 0 --json 2>"$errfile"); then
-		curmax=$(printf '%s' "$out" | jq -r '([.messages[]?.id] + [0]) | max' 2>/dev/null)
-		case "$curmax" in
-			''|*[!0-9]* ) curmax="" ;;
-			* )           poll_ok=1 ;;
-		esac
+		# `am check-inbox` prints NOTHING on a zero-unread inbox (it is built for
+		# git hooks): empty stdout with exit 0 is a healthy empty inbox — treat it
+		# as {"messages":[]} (max id 0), NOT a failed poll. Without this the very
+		# first poll of an empty inbox falls through to the else-branch and exits 4.
+		if [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+			curmax=0
+			poll_ok=1
+		else
+			curmax=$(printf '%s' "$out" | jq -r '([.messages[]?.id] + [0]) | max' 2>/dev/null)
+			case "$curmax" in
+				''|*[!0-9]* ) curmax="" ;;
+				* )           poll_ok=1 ;;
+			esac
+		fi
 	fi
 
 	if [ "$poll_ok" -eq 1 ]; then
