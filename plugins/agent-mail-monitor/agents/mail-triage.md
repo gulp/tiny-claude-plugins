@@ -25,11 +25,17 @@ or registers — by design. Do not attempt to work around that:
 
 - **Never** send, reply to, or ack a message; never mark one read; never touch a
   file reservation, contact policy, or identity registration.
-- Reading is safe and non-consuming: `fetch_inbox` / `fetch_inbox_product` (and
-  the `am inbox` / `am robot inbox` read commands) return mail **without**
-  marking it read, so your triage never consumes a message out from under a
-  later real `fetch`/`ack`. This mirrors the plugin's core promise — it never
-  marks mail read.
+- **`fetch_inbox` / `fetch_inbox_product` CONSUME — they mark returned messages
+  read** (the tool's own contract: "Retrieve recent messages … and mark returned
+  messages read"; there is no peek/no-mark parameter — verified against am
+  v0.3.21). Do NOT treat them as safe reads. For genuinely non-consuming triage,
+  prefer the query surfaces — `search_messages` / `search_messages_product`,
+  `summarize_thread` / `summarize_thread_product`, `whois`, `list_agents` — and
+  reading the canonical git-mailbox `.md` files on disk. `am robot inbox` is a
+  candidate non-consuming read but has NOT been source-verified read-only (a
+  "read-only" label is exactly what proved false for `check-inbox`); confirm before
+  relying on it. If you must call `fetch_inbox`, know that you are consuming the
+  mail — say so in your report.
 - Every `am` command available to you is a read/query surface. If a task would
   require an action (answering an ask, acking a request, reserving a path),
   **recommend it in your report for the operator to do** — do not do it yourself.
