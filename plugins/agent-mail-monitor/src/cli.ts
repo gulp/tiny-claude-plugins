@@ -133,6 +133,28 @@ export function noteResolvedBus(resolved: ResolvedProject, emit: (line: string) 
   }
 }
 
+/** Where a product-mode bus key came from — always explicit (a flag or an env
+ *  var), so unlike `ResolvedProject` there is no cwd-fallthrough case to warn
+ *  about; this exists purely to confirm. */
+export type ProductKeySource = "--product" | "$AGENT_MAIL_PRODUCT";
+
+/** Product-mode counterpart to `noteResolvedBus` (tcp-p0x.15): before this,
+ *  product mode had NO bus-identity announcement at all — a `monitor`
+ *  notification fired from a product bus could not be told apart from a
+ *  single-project one, or from a sibling product bus, defeating the whole
+ *  point of naming the bus. Same `emit`-injection convention as
+ *  `noteResolvedBus` for the same reason (stdout for `monitor`, stderr for the
+ *  standalone `product` command so its stdout stays a pure per-message stream). */
+export function noteResolvedProductBus(
+  productKey: string,
+  source: ProductKeySource,
+  emit: (line: string) => void,
+): void {
+  emit(
+    `agent-mail-monitor: watching product bus '${productKey}' (resolved from ${source}).`,
+  );
+}
+
 // $MAIL_WATCH_SCOPE (tcp-p0x.16.2) — env-only, read by the `monitor` entrypoint
 // (mirrors AGENT_MAIL_PRODUCT / MAIL_POLL_INTERVAL, both already env-driven
 // there). The explicit `watch` subcommand stays flag-driven and single-project;
@@ -214,6 +236,13 @@ function buildProgram(): Command {
         );
         Deno.exit(ExitCode.USAGE);
       }
+      // stderr: `product`'s stdout is a pure one-line-per-message stream, mirroring
+      // `watch`'s noteResolvedBus-to-stderr split above (tcp-p0x.15).
+      noteResolvedProductBus(
+        productKey,
+        opts.product ? "--product" : "$AGENT_MAIL_PRODUCT",
+        console.error,
+      );
       const code = await runProductWatch({
         productKey,
         agent: opts.agent,
@@ -304,6 +333,10 @@ function buildProgram(): Command {
       // the FS backend's slug set below, and is not consulted here).
       const product = Deno.env.get("AGENT_MAIL_PRODUCT");
       if (product) {
+        // stdout: a Monitor host surfaces only stdout, so product mode needs the
+        // same bus-identity confirmation single-project mode gets below via
+        // noteResolvedBus (tcp-p0x.15).
+        noteResolvedProductBus(product, "$AGENT_MAIL_PRODUCT", console.log);
         const code = await runProductWatch({
           productKey: product,
           agent,
