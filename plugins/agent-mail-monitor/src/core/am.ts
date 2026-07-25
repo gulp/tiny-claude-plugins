@@ -103,9 +103,16 @@ export interface PollResult {
 }
 
 /**
- * One read-only check-inbox poll. `am check-inbox` does NOT mark messages read,
- * so watching never consumes mail out from under a later fetch_inbox. A poll is
- * OK only if am exits 0 AND the body parses to the expected shape.
+ * One check-inbox poll. CONSUMPTION WARNING: `am check-inbox` without `--direct`
+ * is NOT read-only when the am daemon is up (the default) — it routes through the
+ * server's fetch_inbox, which MARKS RETURNED MESSAGES READ (verified against am
+ * v0.3.21; the pure-SELECT path requires `--direct` AND no daemon listening, and
+ * this call passes neither). So every poll marks the returned mail read and can
+ * steal it from a later interactive fetch_inbox(unread_only). The fix is to move
+ * the watch backend to the append-only canonical git-mailbox on disk (see
+ * ./mailbox.ts + the plugin beads); this function is retained for the current
+ * watch and the shadow cross-check only. A poll is OK only if am exits 0 AND the
+ * body parses to the expected shape.
  */
 export async function pollInbox(
   agent: string,
@@ -125,6 +132,15 @@ export async function pollInbox(
     throw e;
   }
   if (res.code !== 0) return empty(res.stderr.trim() || `am exited ${res.code}`);
+
+  // `am check-inbox` prints NOTHING on a zero-unread inbox (it is built for git
+  // hooks): empty stdout with exit 0 is SUCCESS, not a malformed body. Without
+  // this guard JSON.parse("") throws and the first poll reports failure → exit 4,
+  // so the monitor can never arm on an empty inbox — the common steady state.
+  // Return ok:true (NOT the empty() helper, which is ok:false and reads as a
+  // failure). The real shape guard below still fails loudly on a genuine
+  // non-JSON body (e.g. an HTML error page).
+  if (res.stdout.trim() === "") return { ok: true, messages: [], maxId: 0 };
 
   let parsed: unknown;
   try {
@@ -195,9 +211,11 @@ function coerceInboxEnvelope(parsed: unknown): unknown {
 }
 
 /**
- * One read-only product-inbox poll. `--since-ts` (when provided) asks am for
- * messages strictly newer than the watermark; we still guard by created_ts in
- * the caller. Read-only — like check-inbox it does not mark messages read.
+ * One product-inbox poll. `--since-ts` (when provided) asks am for messages
+ * strictly newer than the watermark; we still guard by created_ts in the caller.
+ * Genuinely read-only: the product path (`fetch_inbox_product`, and the offline
+ * local-DB fallback) does NOT mark messages read (verified against am v0.3.21) —
+ * UNLIKE single-project `check-inbox`, whose daemon path consumes (see pollInbox).
  */
 export async function productsInbox(
   productKey: string,
