@@ -14,7 +14,7 @@ function proj(key: string, label = key): LinkedProject {
 
 /** A probe that hits on exactly one project key, absent everywhere else. */
 function hitOn(target: string, message: unknown = { id: 1, subject: "hi" }) {
-  return (id: string, key: string): Promise<MessageProbe> =>
+  return (_id: string, key: string): Promise<MessageProbe> =>
     Promise.resolve(key === target ? { kind: "hit", message } : { kind: "absent" });
 }
 
@@ -240,6 +240,52 @@ Deno.test("runMessage: fan-out is capped and the skip is reported, not silent", 
   const env = JSON.parse(cap.out.join("\n"));
   assertEquals(env.data.skipped, 100);
   assertStringIncludes(env.error.message, "beyond the fan-out cap");
+});
+
+Deno.test("runMessage: a --product miss discloses the scope, so the 'no' isn't silently narrowed", async () => {
+  const cap = capture();
+  let code: number;
+  try {
+    code = await runMessage({
+      id: "999",
+      product: "acme",
+      json: true,
+      deps: depsWith({
+        listProductProjects: () =>
+          Promise.resolve({ ok: true, projects: [proj("p1"), proj("p2")] }),
+        probe: () => Promise.resolve({ kind: "absent" }),
+      }),
+    });
+  } finally {
+    cap.restore();
+  }
+  assertEquals(code, ExitCode.NOT_FOUND);
+  const env = JSON.parse(cap.out.join("\n"));
+  assertEquals(env.error.name, "NOT_FOUND");
+  // the miss must name the product scope — a message may still exist in an unlinked project.
+  assertStringIncludes(env.error.message, "product 'acme'");
+});
+
+Deno.test("runMessage: a miss with zero projects says so, not 'not found in any of 0 project(s)'", async () => {
+  const cap = capture();
+  let code: number;
+  try {
+    code = await runMessage({
+      id: "999",
+      json: true,
+      deps: depsWith({
+        listAllProjects: () => Promise.resolve({ ok: true, projects: [] }),
+      }),
+    });
+  } finally {
+    cap.restore();
+  }
+  assertEquals(code, ExitCode.NOT_FOUND);
+  const env = JSON.parse(cap.out.join("\n"));
+  assertEquals(env.error.name, "NOT_FOUND");
+  assertEquals(env.data.probed, 0);
+  // honest wording for the empty-frontier case.
+  assertStringIncludes(env.error.message, "no projects");
 });
 
 Deno.test("runMessage: human output on a hit prints a readable block, no envelope", async () => {

@@ -29,7 +29,21 @@ import {
  *  rather than silently searched-partially-as-if-fully (a silent-failure guard). */
 const MAX_FANOUT = 500;
 
+/** Per-`am`-call ceiling. Bounds a hanging `am` (observed, and guarded the same
+ *  way in doctor: `am products status <bad-key>` hangs rather than erroring) so a
+ *  one-shot lookup always terminates. Applied FRESH per call, so one slow project
+ *  can't consume the budget of the rest. */
+const AM_TIMEOUT_MS = 8000;
+
 const CMD = "message";
+
+/** A per-call signal: the caller's cancellation (SIGINT/SIGTERM) OR a fresh
+ *  timeout, whichever fires first. Without this a bad `--product` key wedges the
+ *  whole command forever (the exact footgun doctor bounds). */
+function boundedSignal(base?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(AM_TIMEOUT_MS);
+  return base ? AbortSignal.any([base, timeout]) : timeout;
+}
 
 /** Seams so the resolver is testable without a real `am` on PATH. */
 export interface MessageDeps {
@@ -43,10 +57,14 @@ export interface MessageDeps {
   probe: (id: string, projectKey: string, signal?: AbortSignal) => Promise<MessageProbe>;
 }
 
+// The real, am-backed deps. Each wraps its `am` call in a fresh per-call timeout
+// so no single project (a hanging `products status`, a wedged probe) can stall
+// the command. Tests inject fakes and never reach these — so no timer is created
+// under `deno test` (which would trip the leak sanitizer).
 const defaultDeps: MessageDeps = {
-  listAllProjects: robotProjects,
-  listProductProjects: productStatusProjects,
-  probe: robotMessage,
+  listAllProjects: (signal) => robotProjects(boundedSignal(signal)),
+  listProductProjects: (key, signal) => productStatusProjects(key, boundedSignal(signal)),
+  probe: (id, key, signal) => robotMessage(id, key, boundedSignal(signal)),
 };
 
 export interface MessageOptions {
@@ -191,14 +209,21 @@ export async function runMessage(opts: MessageOptions): Promise<number> {
     return ExitCode.SERVER_UNREACHABLE;
   }
 
-  // Clean miss — ONE diagnostic (not N stacked errors), but note anything that
-  // could not be queried and anything skipped past the cap, so the "no" is honest.
+  // Clean miss — ONE diagnostic (not N stacked errors). Disclose everything that
+  // narrows the search so the "no" is honest, never a silent false negative:
+  //  - the product scope, when set (via --product or $AGENT_MAIL_PRODUCT): the
+  //    search covered only that bus, so the id may still exist in an unlinked
+  //    project. Without this note a user who set $AGENT_MAIL_PRODUCT for watching
+  //    would read a scoped miss as a global one.
+  //  - projects that could not be queried, and any dropped past the fan-out cap.
+  const scopeNote = opts.product ? ` linked to product '${opts.product}'` : "";
   const erroredNote = result.errored.length
     ? ` (${result.errored.length} project(s) could not be queried)`
     : "";
   const skipNote = skipped ? ` (${skipped} beyond the fan-out cap were not searched)` : "";
-  const msg =
-    `message #${opts.id} not found in any of ${result.probed} project(s)${erroredNote}${skipNote}`;
+  const msg = result.probed === 0
+    ? `message #${opts.id} not found: no projects${scopeNote} were available to search`
+    : `message #${opts.id} not found in any of ${result.probed} project(s)${scopeNote}${erroredNote}${skipNote}`;
   if (opts.json) {
     printEnvelope(
       err(CMD, ExitCode.NOT_FOUND, "NOT_FOUND", msg, {
