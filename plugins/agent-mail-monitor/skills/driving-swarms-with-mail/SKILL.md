@@ -238,6 +238,35 @@ Two things this is **not**:
   not the CLI guide, as authoritative on broadcast for swarms in this repo
   until the upstream guide is reconciled.
 
+## Coordinator extras: `robot handoff` and `robot atc`
+
+Two `am robot` subcommands relevant to a coordinator running this loop over a
+live swarm, both probed against `am` 0.3.21:
+
+- **`am robot handoff --project <cwd> --agent <you> --json --dry-run`** —
+  stale in-progress-task ownership dashboard. It reads the project's task
+  store (e.g. `.beads/issues.jsonl`) and flags in-progress tasks whose owning
+  agent hasn't been active recently (`--active-minutes`, default 30) or
+  haven't been updated in a while (`--stale-minutes`, default 720 = 12h),
+  bucketing them into `keep` / `ask_owner` / `takeover_candidates` /
+  `reopen_candidates`. **Always read-only**, per its own `--help` text: "The
+  command is always read-only" — true whether or not `--dry-run` is passed;
+  `--dry-run` just makes the read-only-ness explicit in the output
+  (`"read_only": true, "dry_run": true`). Useful for a coordinator to run
+  periodically to catch abandoned task ownership before reassigning work —
+  but do **not** act on its reopen recommendations automatically; treat them
+  as a human-reviewed suggestion, not an instruction to execute.
+- **`am robot atc --json`** — a snapshot of the AM server's optional
+  adaptive-learning sidecar ("ATC" = air-traffic-control), *not* a general
+  server-liveness probe. On a base-mode install (`AM_ATC_ENABLED=false`, the
+  common case) it just returns `{"enabled": false, "source": "disabled", ...}`
+  — cheap and safe to call, but tells you nothing about whether the AM server
+  itself is up. For actual liveness, use `am robot inbox` (fast, DB-backed)
+  or a raw HTTP probe (`curl --max-time 5 <server-url>/mcp/`) — see this
+  plugin's `diagnose-agent-mail-service` skill — not `atc`, and not
+  `am status` / `robot status` (a 1.3–15.8s dashboard synthesis, too slow to
+  use as a wedge check).
+
 ## Boundaries
 
 - **Stay inside your assigned lane.** If a task's acceptance criteria would
