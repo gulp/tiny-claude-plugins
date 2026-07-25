@@ -171,6 +171,61 @@ async function dirExists(dir: string): Promise<boolean> {
   }
 }
 
+// --- ack/urgency frontmatter (tcp-p0x.7) ------------------------------------
+//
+// Every canonical message `.md` opens with a `---json { ... } ---` frontmatter
+// block carrying `ack_required` (bool) and `importance` (low|normal|high|urgent)
+// among other fields (verified live against a delivered message, 2026-07-25).
+// `MailboxEntry.path` already points at that file, so this is one read + parse
+// away — no new command, no daemon, and it can never disagree with the detector
+// (same file). Used only by `actionable`/filtered watch modes (tcp-p0x.7); the
+// default `basic` mode never calls this, so it adds zero I/O to the unchanged
+// path.
+
+/** The two ack/urgency fields the actionable watch mode cares about. */
+export interface AckInfo {
+  ackRequired: boolean;
+  importance: string;
+}
+
+/**
+ * Parse `ack_required` + `importance` out of a message file's raw text. Returns
+ * null when the frontmatter block is absent/malformed or either field is
+ * missing/wrong-typed — callers treat null as "no ack info available" (render
+ * no marker, fail no filter match) rather than crashing on a corrupt/foreign
+ * file.
+ */
+export function parseAckInfo(raw: string): AckInfo | null {
+  const m = raw.match(/^---json\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!m) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(m[1]);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const ackRequired = (parsed as Record<string, unknown>).ack_required;
+  const importance = (parsed as Record<string, unknown>).importance;
+  if (typeof ackRequired !== "boolean" || typeof importance !== "string") return null;
+  return { ackRequired, importance };
+}
+
+/**
+ * Read + parse a message's ack/urgency frontmatter from disk. Never throws:
+ * an unreadable file (races with retention, permissions) or malformed
+ * frontmatter yields null, matching this module's never-throw convention —
+ * the caller degrades to "no marker" / "filtered out" rather than killing a
+ * watch tick.
+ */
+export async function readAckInfo(path: string): Promise<AckInfo | null> {
+  try {
+    return parseAckInfo(await Deno.readTextFile(path));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Snapshot the delivered-mail set for `agent` across every project slug, sorted
  * by (id ascending). Read-only. A missing inbox dir is recorded in `missingDirs`

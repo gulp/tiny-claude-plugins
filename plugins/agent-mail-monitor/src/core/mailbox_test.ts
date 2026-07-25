@@ -11,7 +11,14 @@
 // Run: deno test --allow-read --allow-write --allow-env src/core/mailbox_test.ts
 
 import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
-import { inboxDir, parseMailboxFilename, slugForProject, snapshotMailbox } from "./mailbox.ts";
+import {
+  inboxDir,
+  parseAckInfo,
+  parseMailboxFilename,
+  readAckInfo,
+  slugForProject,
+  snapshotMailbox,
+} from "./mailbox.ts";
 
 Deno.test("slugForProject matches AM dir-mode slugging", () => {
   assertEquals(slugForProject("/home/gulp/Vaults/everything"), "home-gulp-vaults-everything");
@@ -104,4 +111,59 @@ Deno.test("snapshotMailbox: empty root => all slugs missing, no entries", async 
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+// --- parseAckInfo / readAckInfo (tcp-p0x.7) ----------------------------------
+//
+// Shape verified live against a real delivered message's frontmatter
+// (2026-07-25): `---json\n{ ..., "importance": "normal", "ack_required": false,
+// ... }\n---\nbody`. These lock the parser against that real shape plus the
+// degrade-to-null cases a foreign/corrupt/absent block must hit.
+
+const REAL_SHAPED_FRONTMATTER =
+  '---json\n{\n  "id": 27709,\n  "from": "WindyBarn",\n  "to": ["GoldenGlen"],\n  "cc": [],\n  "bcc": [],\n  "subject": "hello",\n  "created": "2026-07-25T03:38:37.319956Z",\n  "thread_id": "tcp-p0x.16.2",\n  "project": "/home/gulp/projects/tiny-claude-plugins",\n  "project_slug": "home-gulp-projects-tiny-claude-plugins",\n  "importance": "normal",\n  "ack_required": false,\n  "attachments": []\n}\n---\n\nbody text\n';
+
+Deno.test("parseAckInfo: parses ack_required + importance from a real-shaped frontmatter block", () => {
+  const info = parseAckInfo(REAL_SHAPED_FRONTMATTER);
+  assertEquals(info, { ackRequired: false, importance: "normal" });
+});
+
+Deno.test("parseAckInfo: ack_required=true / importance=urgent parses correctly", () => {
+  const raw = '---json\n{\n  "ack_required": true,\n  "importance": "urgent"\n}\n---\nbody\n';
+  assertEquals(parseAckInfo(raw), { ackRequired: true, importance: "urgent" });
+});
+
+Deno.test("parseAckInfo: no frontmatter block => null", () => {
+  assertEquals(parseAckInfo("just a plain file\nwith no frontmatter\n"), null);
+});
+
+Deno.test("parseAckInfo: malformed JSON in the block => null, not a throw", () => {
+  assertEquals(parseAckInfo("---json\n{not valid json\n---\nbody\n"), null);
+});
+
+Deno.test("parseAckInfo: block present but fields missing/wrong-typed => null", () => {
+  assertEquals(parseAckInfo("---json\n{}\n---\nbody\n"), null);
+  assertEquals(
+    parseAckInfo('---json\n{"ack_required": "yes", "importance": "urgent"}\n---\nbody\n'),
+    null,
+    "wrong-typed ack_required (string, not boolean) must not coerce",
+  );
+});
+
+Deno.test("readAckInfo: reads + parses a real file from disk", async () => {
+  const root = await Deno.makeTempDir({ prefix: "mailbox-ackinfo-" });
+  try {
+    const path = `${root}/msg.md`;
+    await Deno.writeTextFile(
+      path,
+      '---json\n{"ack_required": true, "importance": "high"}\n---\nbody\n',
+    );
+    assertEquals(await readAckInfo(path), { ackRequired: true, importance: "high" });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("readAckInfo: a missing file never throws, yields null", async () => {
+  assertEquals(await readAckInfo("/does/not/exist/msg.md"), null);
 });

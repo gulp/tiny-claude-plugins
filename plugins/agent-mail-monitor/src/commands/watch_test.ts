@@ -28,6 +28,16 @@
 //      just "some" project — two concurrent notifications stay distinctly
 //      identifiable (test 5, above, now asserts this too).
 //
+// ...and tcp-p0x.7 (ack/urgency-aware watch, FS frontmatter backing):
+//   9. MAIL_WATCH_MODE=actionable tags an ack-required message with
+//      (ACK-REQUIRED) and a high/urgent-importance message with (URGENT),
+//      sourced from the message .md's own frontmatter (mailbox.ts readAckInfo).
+//  10. MAIL_WATCH_FILTER=ack|urgent suppresses a new message that doesn't
+//      match — independent of mode.
+//  11. the default (mode/filter both unset) reproduces the pre-tcp-p0x.7 line
+//      byte-for-byte, even when the underlying message IS ack-required/urgent
+//      — basic mode never reads that frontmatter.
+//
 // Run: deno test --allow-read --allow-write --allow-env src/commands/watch_test.ts
 
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
@@ -38,6 +48,18 @@ import { AppError, ExitCode } from "../core/exit.ts";
 async function writeMsg(dir: string, name: string): Promise<void> {
   await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(`${dir}/${name}`, "---json\n{}\n---\nbody\n");
+}
+
+/** Like `writeMsg`, but with a real ack_required/importance frontmatter block
+ *  (tcp-p0x.7 fixtures). */
+async function writeMsgWithAck(
+  dir: string,
+  name: string,
+  fields: { ackRequired: boolean; importance: string },
+): Promise<void> {
+  await Deno.mkdir(dir, { recursive: true });
+  const json = JSON.stringify({ ack_required: fields.ackRequired, importance: fields.importance });
+  await Deno.writeTextFile(`${dir}/${name}`, `---json\n${json}\n---\nbody\n`);
 }
 
 /** Capture console.log lines produced while `fn` runs. */
@@ -391,6 +413,239 @@ Deno.test("watch (tcp-p0x.12): a message straddling a poll outage still fires ex
       lines.some((l) => l.includes("snapshot error")),
       "the degraded-tick notice should have fired during the outage",
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+// --- tcp-p0x.7: MAIL_WATCH_MODE / MAIL_WATCH_FILTER (ack/urgency-aware watch) -
+//
+// Acceptance criteria: (1) an ack-required message gets the marker in
+// actionable mode; (2) filter mode suppresses a non-matching message; (3)
+// basic mode (default) is byte-for-byte unchanged, even when the frontmatter
+// carries ack/urgent data it simply never reads.
+
+Deno.test("watch (tcp-p0x.7): actionable mode tags an ack-required message with (ACK-REQUIRED)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-actionable-ack-" });
+  const agent = "Tester";
+  const slug = "proj-ack";
+  const dir = `${inboxDir(root, slug, agent)}/2026/07`;
+
+  try {
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slug],
+        interval: 1,
+        mode: "actionable",
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 1200)); // baseline, nothing yet
+
+      await writeMsgWithAck(dir, "2026-07-24T11-00-00Z__ack-me__20.md", {
+        ackRequired: true,
+        importance: "normal",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(
+      mailLines.length,
+      1,
+      `expected exactly 1 MAIL line, got: ${JSON.stringify(mailLines)}`,
+    );
+    assert(mailLines[0].includes("#20"));
+    assert(
+      mailLines[0].includes("(ACK-REQUIRED)"),
+      `expected an (ACK-REQUIRED) marker: ${mailLines[0]}`,
+    );
+    // Marker sits between <ts> and the colon, per the module doc's format.
+    assert(
+      /Z \(ACK-REQUIRED\): /.test(mailLines[0]),
+      `marker must sit between <ts> and the colon: ${mailLines[0]}`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("watch (tcp-p0x.7): actionable mode tags a high/urgent-importance message with (URGENT)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-actionable-urgent-" });
+  const agent = "Tester";
+  const slug = "proj-urgent";
+  const dir = `${inboxDir(root, slug, agent)}/2026/07`;
+
+  try {
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slug],
+        interval: 1,
+        mode: "actionable",
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      await writeMsgWithAck(dir, "2026-07-24T11-00-00Z__fire__20.md", {
+        ackRequired: false,
+        importance: "urgent",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(mailLines.length, 1);
+    assert(mailLines[0].includes("(URGENT)"), `expected an (URGENT) marker: ${mailLines[0]}`);
+    assert(
+      !mailLines[0].includes("ACK-REQUIRED"),
+      "must not tag ACK-REQUIRED for a non-ack message",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("watch (tcp-p0x.7): MAIL_WATCH_FILTER=ack suppresses a non-ack-required message", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-filter-ack-" });
+  const agent = "Tester";
+  const slug = "proj-filter-ack";
+  const dir = `${inboxDir(root, slug, agent)}/2026/07`;
+
+  try {
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slug],
+        interval: 1,
+        filter: "ack",
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 1200)); // baseline
+
+      await writeMsgWithAck(dir, "2026-07-24T11-00-00Z__plain__20.md", {
+        ackRequired: false,
+        importance: "normal",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      await writeMsgWithAck(dir, "2026-07-24T11-05-00Z__needs-ack__21.md", {
+        ackRequired: true,
+        importance: "normal",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(
+      mailLines.length,
+      1,
+      `filter=ack must suppress the non-ack message: ${JSON.stringify(mailLines)}`,
+    );
+    assert(mailLines[0].includes("#21"));
+    assert(!mailLines.some((l) => l.includes("#20")), "non-ack message #20 must be suppressed");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("watch (tcp-p0x.7): MAIL_WATCH_FILTER=urgent suppresses a normal-importance message", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-filter-urgent-" });
+  const agent = "Tester";
+  const slug = "proj-filter-urgent";
+  const dir = `${inboxDir(root, slug, agent)}/2026/07`;
+
+  try {
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      const done = runWatch({
+        agent,
+        root,
+        slugs: [slug],
+        interval: 1,
+        filter: "urgent",
+        signal: ac.signal,
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      await writeMsgWithAck(dir, "2026-07-24T11-00-00Z__routine__20.md", {
+        ackRequired: true, // ack-required but NOT urgent — must still be suppressed
+        importance: "normal",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      await writeMsgWithAck(dir, "2026-07-24T11-05-00Z__fire__21.md", {
+        ackRequired: false,
+        importance: "high",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(
+      mailLines.length,
+      1,
+      `filter=urgent must suppress the normal message: ${JSON.stringify(mailLines)}`,
+    );
+    assert(mailLines[0].includes("#21"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("watch (tcp-p0x.7): default (basic) mode is byte-for-byte unchanged, even with ack/urgent frontmatter present", async () => {
+  const root = await Deno.makeTempDir({ prefix: "watch-basic-unchanged-" });
+  const agent = "Tester";
+  const slug = "proj-basic";
+  const dir = `${inboxDir(root, slug, agent)}/2026/07`;
+
+  try {
+    const ac = new AbortController();
+    const lines = await captureLog(async () => {
+      // mode/filter both omitted -> defaults (basic, no filter) — the exact
+      // same call shape T1/tcp-p0x.16.x tests use above.
+      const done = runWatch({ agent, root, slugs: [slug], interval: 1, signal: ac.signal });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      // This message is ack-required AND urgent — basic mode must still emit
+      // the pre-tcp-p0x.7 line shape, untouched.
+      await writeMsgWithAck(dir, "2026-07-24T11-00-00Z__loaded__20.md", {
+        ackRequired: true,
+        importance: "urgent",
+      });
+      await new Promise((r) => setTimeout(r, 1200));
+
+      ac.abort();
+      await done;
+    });
+
+    const mailLines = lines.filter((l) => l.startsWith("MAIL "));
+    assertEquals(mailLines.length, 1);
+    assertEquals(
+      mailLines[0],
+      `MAIL #20 [${slug}] 2026-07-24T11-00-00Z: loaded`,
+      "basic mode must not insert any marker, regardless of the message's frontmatter",
+    );
+    const m = mailLines[0].match(MAIL_LINE_RE);
+    assert(m, `basic-mode line must still match the original format regex: ${mailLines[0]}`);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

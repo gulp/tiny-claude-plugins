@@ -51,11 +51,23 @@
 // Output (stdout, one line per new message) — HUMAN, not an envelope, because
 // the Monitor turns each stdout line into a notification:
 //   MAIL #<id> [<project>] <ts>: <subject>
+//
+// tcp-p0x.7: MAIL_WATCH_MODE=actionable inserts an additive ack/urgency marker
+// between <ts> and the colon, sourced from the message's own `.md` frontmatter
+// (NOT check-inbox, NOT robot-inbox — see mailbox.ts's readAckInfo doc for why):
+//   MAIL #<id> [<project>] <ts> (ACK-REQUIRED): <subject>
+//   MAIL #<id> [<project>] <ts> (URGENT): <subject>
+// MAIL_WATCH_MODE=basic (default) never reads that frontmatter and reproduces
+// the line above byte-for-byte. MAIL_WATCH_FILTER=ack|urgent additionally
+// suppresses any new message that doesn't match — independent of mode, so a
+// filtered `basic` watch stays unmarked but only fires on matching mail.
 
 import {
+  type AckInfo,
   listInboxSlugs,
   type MailboxEntry,
   type MailWatchScope,
+  readAckInfo,
   snapshotMailbox,
   type SnapshotResult,
 } from "../core/mailbox.ts";
@@ -80,6 +92,63 @@ export interface WatchOptions {
    *  asserted lossless. Production never passes this — it always tails the real
    *  on-disk git-mailbox. */
   snapshot?: (root: string, slugs: string[], agent: string) => Promise<SnapshotResult>;
+  /** MAIL_WATCH_MODE (tcp-p0x.7). "basic" (default, undefined) reproduces
+   *  today's notification line byte-for-byte — no ack info is even read.
+   *  "actionable" reads each NEW message's frontmatter and appends an
+   *  additive ack/urgency marker to the line. */
+  mode?: MailWatchMode;
+  /** MAIL_WATCH_FILTER (tcp-p0x.7). When set, a NEW message is emitted only
+   *  when it matches: "ack" = `ack_required === true`, "urgent" = importance
+   *  in {high, urgent}. Independent of `mode` — filtering can suppress lines
+   *  in "basic" mode too, just without the marker. Unset (default) emits
+   *  every new message, matching today's behavior. */
+  filter?: MailWatchFilter;
+  /** Seam for tests: overrides `readAckInfo` so ack/urgency data can be
+   *  injected without real frontmatter files on disk. Production always uses
+   *  the real reader. */
+  readAck?: (path: string) => Promise<AckInfo | null>;
+}
+
+// --- MAIL_WATCH_MODE / MAIL_WATCH_FILTER (tcp-p0x.7) ------------------------
+
+export type MailWatchMode = "basic" | "actionable";
+const MAIL_WATCH_MODES: readonly MailWatchMode[] = ["basic", "actionable"];
+
+/** Type guard: is `v` one of the recognized MAIL_WATCH_MODE values? */
+export function isMailWatchMode(v: string): v is MailWatchMode {
+  return (MAIL_WATCH_MODES as readonly string[]).includes(v);
+}
+
+export type MailWatchFilter = "ack" | "urgent";
+const MAIL_WATCH_FILTERS: readonly MailWatchFilter[] = ["ack", "urgent"];
+
+/** Type guard: is `v` one of the recognized MAIL_WATCH_FILTER values? */
+export function isMailWatchFilter(v: string): v is MailWatchFilter {
+  return (MAIL_WATCH_FILTERS as readonly string[]).includes(v);
+}
+
+/** high/urgent importance is what both the URGENT marker and the "urgent"
+ *  filter key on — one definition so the two stay in lockstep. */
+function isUrgentImportance(importance: string): boolean {
+  return importance === "high" || importance === "urgent";
+}
+
+/** Does `ack` satisfy `filter`? Missing/unparseable ack info (null) never
+ *  matches — an unparseable frontmatter block is treated as "can't confirm",
+ *  not "assume it matters", so a filtered watch degrades to silence rather
+ *  than false-positive spam on a foreign/corrupt file. */
+function matchesFilter(filter: MailWatchFilter, ack: AckInfo | null): boolean {
+  if (!ack) return false;
+  return filter === "ack" ? ack.ackRequired : isUrgentImportance(ack.importance);
+}
+
+/** Builds the additive `(ACK-REQUIRED)` / `(URGENT)` / `(ACK-REQUIRED, URGENT)`
+ *  suffix for `actionable` mode. Empty string when neither applies. */
+function ackMarker(ack: AckInfo): string {
+  const tags: string[] = [];
+  if (ack.ackRequired) tags.push("ACK-REQUIRED");
+  if (isUrgentImportance(ack.importance)) tags.push("URGENT");
+  return tags.length ? ` (${tags.join(", ")})` : "";
 }
 
 export interface ScopeResolveOptions {
@@ -136,9 +205,12 @@ const SKIP_WARN_THRESHOLD = 1; // one skipped(unparseable) file is worth a loud 
 
 /** Formats one notification line — see the module doc's tcp-p0x.16.3 note for
  * why `[${e.project}]` (the source-project slug) is always present, in every
- * scope, not just cross-project ones. */
-function formatLine(e: MailboxEntry): string {
-  return `MAIL #${e.id} [${e.project}] ${e.ts}: ${e.subject}`;
+ * scope, not just cross-project ones. `ack` is the tcp-p0x.7 additive marker:
+ * null (basic mode, or unparseable frontmatter) reproduces the pre-tcp-p0x.7
+ * line byte-for-byte — the marker is inserted between the timestamp and the
+ * colon, never touching the rest of the shape. */
+function formatLine(e: MailboxEntry, ack: AckInfo | null): string {
+  return `MAIL #${e.id} [${e.project}] ${e.ts}${ack ? ackMarker(ack) : ""}: ${e.subject}`;
 }
 
 function maxId(entries: MailboxEntry[]): number {
@@ -154,6 +226,9 @@ function maxId(entries: MailboxEntry[]): number {
 export async function runWatch(opts: WatchOptions): Promise<number> {
   const { agent, root, slugs, interval, signal } = opts;
   const snapshot = opts.snapshot ?? snapshotMailbox;
+  const mode: MailWatchMode = opts.mode ?? "basic";
+  const filter = opts.filter;
+  const readAck = opts.readAck ?? readAckInfo;
   let last: number | undefined = opts.since; // high-water; undefined until baselined
   let warnedMissing = false;
   let warnedSkips = false;
@@ -206,8 +281,16 @@ export async function runWatch(opts: WatchOptions): Promise<number> {
     if (last === undefined) {
       last = scopeMax; // baseline: adopt without replay
     } else if (scopeMax > last) {
+      // Ack info is read ONLY for a message actually about to be considered
+      // (id > last, i.e. genuinely new this tick) — never for the whole
+      // in-scope set — so `basic` mode (mode="basic" AND filter=undefined)
+      // does zero extra I/O relative to pre-tcp-p0x.7 behavior.
       for (const e of snap.entries) {
-        if (e.id > last) console.log(formatLine(e));
+        if (e.id <= last) continue;
+        const needsAck = mode === "actionable" || filter !== undefined;
+        const ack = needsAck ? await readAck(e.path) : null;
+        if (filter !== undefined && !matchesFilter(filter, ack)) continue;
+        console.log(formatLine(e, mode === "actionable" ? ack : null));
       }
       last = scopeMax;
     }

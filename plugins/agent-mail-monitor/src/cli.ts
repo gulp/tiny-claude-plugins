@@ -7,7 +7,14 @@
 // only the watch loop, envelopes, and (later) product mode + introspection.
 
 import { Command, CommanderError, InvalidArgumentError } from "commander";
-import { resolveScopeSlugs, runWatch } from "./commands/watch.ts";
+import {
+  isMailWatchFilter,
+  isMailWatchMode,
+  type MailWatchFilter,
+  type MailWatchMode,
+  resolveScopeSlugs,
+  runWatch,
+} from "./commands/watch.ts";
 import { runProductWatch } from "./commands/product.ts";
 import { resolveSlugs, runShadow } from "./commands/shadow.ts";
 import { runDoctor } from "./commands/doctor.ts";
@@ -172,6 +179,34 @@ function resolveWatchScopeEnv(): MailWatchScope {
   return raw;
 }
 
+// $MAIL_WATCH_MODE / $MAIL_WATCH_FILTER (tcp-p0x.7) — env-only, monitor-only,
+// same convention as $MAIL_WATCH_SCOPE above (the explicit `watch` subcommand
+// stays flag-driven and never reads either). Default MODE is "basic" —
+// byte-identical to pre-tcp-p0x.7 behavior, no frontmatter ever read. FILTER
+// is unset by default (no suppression). Both fail LOUD on an invalid value,
+// never a silent fallback.
+function resolveWatchModeEnv(): MailWatchMode {
+  const raw = Deno.env.get("MAIL_WATCH_MODE") ?? "basic";
+  if (!isMailWatchMode(raw)) {
+    console.log(
+      `agent-mail-monitor: MAIL_WATCH_MODE='${raw}' is invalid — must be one of: basic, actionable.`,
+    );
+    Deno.exit(ExitCode.USAGE);
+  }
+  return raw;
+}
+function resolveWatchFilterEnv(): MailWatchFilter | undefined {
+  const raw = Deno.env.get("MAIL_WATCH_FILTER");
+  if (raw === undefined || raw === "") return undefined;
+  if (!isMailWatchFilter(raw)) {
+    console.log(
+      `agent-mail-monitor: MAIL_WATCH_FILTER='${raw}' is invalid — must be one of: ack, urgent.`,
+    );
+    Deno.exit(ExitCode.USAGE);
+  }
+  return raw;
+}
+
 function buildProgram(): Command {
   const program = new Command();
   program
@@ -306,7 +341,7 @@ function buildProgram(): Command {
   program
     .command("monitor")
     .description(
-      "Monitor entrypoint: read AGENT_NAME / CLAUDE_PROJECT_DIR / MAIL_POLL_INTERVAL / MAIL_WATCH_SCOPE from env, then watch.",
+      "Monitor entrypoint: read AGENT_NAME / CLAUDE_PROJECT_DIR / MAIL_POLL_INTERVAL / MAIL_WATCH_SCOPE / MAIL_WATCH_MODE / MAIL_WATCH_FILTER from env, then watch.",
     )
     .action(async () => {
       const g = program.opts();
@@ -389,12 +424,16 @@ function buildProgram(): Command {
         }
         throw e;
       }
+      const mode = resolveWatchModeEnv();
+      const filter = resolveWatchFilterEnv();
       const code = await runWatch({
         agent,
         root,
         slugs,
         interval: Number(rawInterval),
         signal: shutdown.signal,
+        mode,
+        filter,
       });
       Deno.exit(code);
     });
