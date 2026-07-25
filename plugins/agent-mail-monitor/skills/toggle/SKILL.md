@@ -1,6 +1,6 @@
 ---
 name: toggle
-description: Turn the Agent Mail background monitor ON or OFF for the current session — arm or silence the watch that notifies on each new Agent Mail message addressed to $AGENT_NAME (the current check-inbox backend consumes — it marks polled mail read). Use when asked to "silence/stop the mail monitor", "stop mail notifications", "start watching my inbox", "arm the agent-mail monitor", or when mail pings are unwanted (or wanted) this session without uninstalling the plugin.
+description: Turn the Agent Mail background monitor ON or OFF for the current session — arm or silence the watch that notifies on each new Agent Mail message addressed to $AGENT_NAME (the backend tails the durable git-mailbox on disk and never marks mail read). Use when asked to "silence/stop the mail monitor", "stop mail notifications", "start watching my inbox", "arm the agent-mail monitor", or when mail pings are unwanted (or wanted) this session without uninstalling the plugin.
 ---
 
 # Toggle Agent Mail Monitor
@@ -29,13 +29,14 @@ If you arm it by hand where `${CLAUDE_PLUGIN_ROOT}` isn't set, substitute the
 plugin's install directory for it.
 
 The `monitor` entrypoint reads `AGENT_NAME` (the identity to watch) and
-`CLAUDE_PROJECT_DIR` from the environment; it needs **`deno`** and **`am`** on
-`PATH` (it parses `am`'s JSON with Zod — no `jq`). With no `AGENT_NAME` the watch
-does **not** fail silently — it emits one loud notice on stdout and exits (code 3)
-rather than watching a nameless inbox. If the very first `am check-inbox` poll
-fails (server down, wrong identity, or auth), the watch reports the cause and exits
-(code 4) instead of masquerading as a healthy-but-quiet watch; run the
-`agent-mail-monitor:doctor` skill to diagnose.
+`CLAUDE_PROJECT_DIR` from the environment; it needs **`deno`** on `PATH` (and
+**`am`** for product mode / the doctor cross-check — the FS watch itself only
+reads the git-mailbox on disk). With no `AGENT_NAME` the watch does **not** fail
+silently — it emits one loud notice on stdout and exits (code 3) rather than
+watching a nameless inbox. An empty/missing inbox is a legitimate steady state
+(fresh identity, no mail yet): the watch arms cleanly, warns once, and stays
+live rather than failing; run the `agent-mail-monitor:doctor` skill if you
+suspect a real misconfiguration (wrong root/agent/project) instead.
 
 ### Arm with an identity mid-session
 
@@ -53,13 +54,12 @@ two watches against different identities.
 
 ## Notes
 
-- **The current backend CONSUMES.** It polls `am check-inbox`, which — without
-  `--direct`, whenever the am daemon is up (the default) — routes through the
-  server's `fetch_inbox` and **marks returned messages read** (verified against am
-  v0.3.21). So an armed monitor eats mail: a later `fetch_inbox(unread_only)` in
-  this or a peer session will not re-surface a message the monitor already reported.
-  Treat the notification itself as the delivery. A genuinely non-consuming FS-tail
-  backend (reads the append-only canonical git-mailbox on disk) is tracked in the
-  plugin beads.
+- **The backend is genuinely non-consuming.** It tails the append-only canonical
+  git-mailbox on disk (plain OS file reads — see `src/core/mailbox.ts`), not
+  `am check-inbox`. `check-inbox`'s consuming daemon path (it marks returned
+  messages read, verified against am v0.3.21) has been retired from this
+  notification path entirely (`tcp-p0x.16.4`); nothing here touches `read_ts`.
+  Still, treat a notification as the delivery — it's the first time you're told
+  about that mail, not a re-fetchable unread flag.
 - **Disable everywhere** (all sessions), not just this one:
   `claude plugin uninstall agent-mail-monitor@tiny-claude-plugins`.

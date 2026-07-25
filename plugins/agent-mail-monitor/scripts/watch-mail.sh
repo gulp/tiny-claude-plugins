@@ -38,11 +38,17 @@ FAIL_WARN_THRESHOLD=3   # consecutive transient failures before one loud warning
 
 usage() {
 	cat <<'EOF'
-watch-mail.sh — emit one line per NEW Agent Mail message, read-only.
+watch-mail.sh — emit one line per NEW Agent Mail message. NOT read-only.
 
-Polls `am check-inbox --json` (which, unlike the MCP fetch_inbox tool, does NOT
-mark messages read) and prints a line for every message whose id exceeds a
-running high-water mark. Meant to be the command of a persistent Monitor.
+CONSUMPTION WARNING: polls `am check-inbox --json`, which — without `--direct`,
+whenever the am daemon is up (the default, and what this script passes) —
+routes through the server's fetch_inbox and MARKS RETURNED MESSAGES READ
+(verified against am v0.3.21). So a message this script reports is marked read:
+a later fetch_inbox(unread_only) will not re-surface it. Treat the notification
+itself as the delivery. Prints a line for every message whose id exceeds a
+running high-water mark. This is the legacy bash path; the Deno CLI's `watch` /
+`monitor` commands (src/cli.ts) tail the durable git-mailbox on disk instead and
+are genuinely non-consuming — prefer those.
 
 Usage:
   watch-mail.sh --agent <NAME> [--project <PATH>] [--since <ID>] [--interval <SEC>]
