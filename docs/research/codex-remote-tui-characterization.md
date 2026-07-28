@@ -100,9 +100,22 @@ loaded thread returns successfully without attaching another conversation
 listener; the source auto-attaches only on its cold/new resume path. Consequently
 the live request continued to target one subscriber.
 
+The exact 0.144.6 source also establishes the response arbitration behavior
+behind that unreachable branch. In
+`codex-rs/app-server/src/outgoing_message.rs`,
+`send_request_to_connections` allocates one request ID and one oneshot callback,
+stores a single callback entry for that ID, then clones the same request to
+every selected connection. Both successful and error responses call
+`take_request_callback`, which atomically removes that sole entry before
+delivering the result. Thus the first response consumes the callback; a later
+response for the same ID finds no callback and is ignored with a warning. This
+is exact-version source evidence, not a live stock-client reproduction.
+
 This is an important negative result:
 
 - the ambiguity rejection is exact-source and unit-proven;
+- targeted request fan-out with first-response callback consumption is
+  exact-source-proven;
 - public stock clients could not create the second subscribed listener in this
   experiment;
 - therefore S2a does **not** claim runtime reproduction of multi-client
