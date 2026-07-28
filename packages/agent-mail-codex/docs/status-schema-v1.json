@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tiny-claude-plugins.invalid/codex-ingress/status-v1.json",
+  "title": "Codex ingress status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "healthy",
+    "bindingId",
+    "agent",
+    "projectSlug",
+    "threadId",
+    "owner",
+    "cursor",
+    "queueDepth",
+    "checks",
+    "lastError",
+    "observedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "healthy": { "type": "boolean" },
+    "bindingId": { "type": "string", "minLength": 1 },
+    "agent": { "type": "string", "minLength": 1 },
+    "projectSlug": { "type": "string", "minLength": 1 },
+    "threadId": { "type": ["string", "null"] },
+    "owner": {
+      "enum": ["headless", "human", "none", "unknown"]
+    },
+    "cursor": { "type": ["integer", "null"], "minimum": 0 },
+    "queueDepth": { "type": ["integer", "null"], "minimum": 0 },
+    "checks": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "state", "code", "detail"],
+        "properties": {
+          "name": {
+            "enum": [
+              "config",
+              "mailbox",
+              "store",
+              "lease",
+              "owner",
+              "thread",
+              "cursor",
+              "queue",
+              "version"
+            ]
+          },
+          "state": { "enum": ["healthy", "unhealthy", "unknown"] },
+          "code": { "type": "string", "minLength": 3 },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "lastError": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "at"],
+          "properties": {
+            "code": { "type": "string", "minLength": 1 },
+            "message": { "type": "string", "minLength": 1 },
+            "at": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "observedAt": { "type": "string", "minLength": 1 }
+  }
+}
