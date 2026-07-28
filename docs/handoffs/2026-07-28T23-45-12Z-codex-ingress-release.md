@@ -14,9 +14,9 @@ repos:
 ## 1) Mission State
 
 - Current objective: finish the Codex Agent Mail ingress release-readiness chain, prove one real installed-Codex delivery, then obtain explicit operator approval before starting the 24-hour R1 shadow user unit.
-- Current status: the durable kernel and fake-App-Server production composition are repaired and tested; `tcp-efp.5.13` service hardening is closed; `tcp-efp.5.12` live ownership handoff and `tcp-efp.5.14` deep live diagnostics are in progress; `tcp-efp.6.10` real smoke and R1 remain blocked.
+- Current status: the durable kernel and fake-App-Server production composition are repaired and tested; `tcp-efp.5.13` service hardening and `tcp-efp.5.14` deep live diagnostics are closed; `tcp-efp.5.12` live ownership handoff has a green core and Unix-socket CLI but still needs the production daemon host; `tcp-efp.6.10` real smoke and R1 remain blocked.
 - Definition of done: `5.12`, `5.14`, and `6.10` close with evidence; R1 runs for a real 24 hours under the approved user unit with zero missed/extra/wrong-scope/silent-malformed events; only then may R2 become ready.
-- Immediate next best action: integrate BeigeHorizon's green live-ownership core into the daemon and CLI after RusticBirch's `production_run.ts`/CLI reservations are released, while OliveCedar finishes `5.14`.
+- Immediate next best action: let BeigeHorizon finish hosting `serveUnixLiveOwnership` in `production_run.ts` with real owner/session hooks and a lifecycle that survives the human gate/reacquire; then run integration and full regressions.
 
 ## 2) Stable Context (carry forward)
 
@@ -29,7 +29,7 @@ repos:
 - The acceptance Codex baseline is `0.144.6`. The installed host reports `0.145.0`, which is drift-only until explicitly promoted under C10.
 - The installed user unit must not be started or made lingering without explicit operator approval. No such approval has been given.
 - Key plan: `docs/plans/codex-agent-mail-ingress.md`. R1 checklist: `docs/research/codex-r1-shadow-gate.md`. Prepared real-smoke gate: `docs/research/codex-v2-production-smoke-gate.md`.
-- Current DAG: `5.12` + `5.13` + `5.14` block `6.10`; `6.10` blocks R1 (`6.4`); R1 blocks R2 (`6.5`). `5.13` is closed, so remaining smoke blockers are `5.12` and `5.14`.
+- Current DAG: `5.12` + `5.13` + `5.14` block `6.10`; `6.10` blocks R1 (`6.4`); R1 blocks R2 (`6.5`). `5.13` and `5.14` are closed, so the only remaining smoke blocker is `5.12`.
 
 ## 3) Progress So Far (what happened)
 
@@ -48,7 +48,7 @@ repos:
 - Plugin verification passed `deno task check` and 38/38 Codex tests. The stock proxy-help probe exceeded its live budget and explicitly used the pinned fixture; no silent live-evidence claim was made.
 - Created and closed `tcp-efp.5.11`: CLI `doctor`/`status` now read SQLite in read-only mode and measure canonical inbox, schema, lease, runtime/owner correlation, durable thread, cursor/baseline, queue/dead letters/oldest pending, and last batch error. Missing diagnostics do not create a database.
 - Fresh-eyes review of `5.11` found missing depth: version checked store schema rather than installed Codex, config was parse-only, and mailbox health was directory-only. Created `tcp-efp.5.14`; OliveCedar claimed it and is editing only `operator/live_status.ts` and focused tests.
-- Created `tcp-efp.5.12` for real daemon ownership handoff. BeigeHorizon claimed it and landed commit `ad616c7`; isolated live authority and commands pass 11/11 O5 tests. End-to-end daemon/CLI hooks remain.
+- Created `tcp-efp.5.12` for real daemon ownership handoff. BeigeHorizon landed commit `ad616c7` for the isolated authority and commit `88ff8e0` for typed Unix-domain IPC, a `0600` socket, bounded errors/timeouts, stable request IDs, and CLI release/acquire with no state fallback; focused O5 tests pass 13/13. The daemon host and real session hooks remain.
 - Created and closed `tcp-efp.5.13`. RusticBirch added `operator/service_permissions.ts`, least-privilege wrapper permissions, App Server environment allowlisting, CLI permission computation, runbook updates, and seven focused tests.
 - Created `tcp-efp.6.10` for a disposable real installed-Codex one-message smoke. OliveCedar drafted its checklist/evidence template but did not execute delivery or start a unit.
 - Agent Mail marching orders were sent to BeigeHorizon (`5.12`), RusticBirch (`5.13`), and OliveCedar (`5.14`/smoke preparation). Shared-file conflicts were intentionally sequenced rather than forced.
@@ -76,8 +76,8 @@ repos:
 ## 6) Open Loops
 
 - `tcp-efp.5.12`: isolated ownership authority is green, but daemon/CLI integration is missing. Blocking reason: BeigeHorizon deferred hooks around RusticBirch's reservations. Suggested next probe: confirm `cli.ts` and `production_run.ts` are free, then implement request-ID-keyed `snapshot|release|acquire` IPC with no JSON fallback.
-- `tcp-efp.5.14`: OliveCedar is implementing installed Codex version/C10 drift, runtime-config consistency, and bounded mailbox readability/layout probes. Blocking reason: active implementation. Suggested next probe: fetch Agent Mail and run focused O1 tests when reported.
-- `tcp-efp.6.10`: real installed-Codex smoke is blocked by `5.12` and `5.14`. Suggested next probe: once both close, follow `docs/research/codex-v2-production-smoke-gate.md` with disposable state and bounded model spend; do not install a lingering unit.
+- `tcp-efp.5.14`: closed by OliveCedar. Installed Codex version/C10 drift, runtime-config consistency, and bounded mailbox readability/layout probes landed; focused deep/live tests pass 7/7.
+- `tcp-efp.6.10`: real installed-Codex smoke is blocked only by `5.12`. Suggested next probe: once it closes, follow `docs/research/codex-v2-production-smoke-gate.md` with disposable state and bounded model spend; do not install a lingering unit.
 - Codex version contradiction: host `0.145.0` versus acceptance `0.144.6`. Blocking reason: newer version is drift-only. Suggested next probe: either execute smoke with an available pinned `0.144.6` binary or explicitly run `0.145.0` as a labeled drift characterization that cannot promote R1.
 - R1 (`tcp-efp.6.4`): 24-hour wall-clock evidence is not started. Blocking reason: `6.10` and operator approval. Suggested next probe: after smoke passes, present exact install/start command and request approval.
 - Whole-tree integration: peer commits and untracked files mean the latest full package/plugin suites must be rerun after `5.12` and `5.14` merge. Suggested next probe: check/lint/fmt, full package tests, then plugin Codex tests.
@@ -114,6 +114,6 @@ repos:
 
 - Read `AGENTS.md`, `CLAUDE.md`, this handoff, `docs/plans/codex-agent-mail-ingress.md`, and the four beads `5.12`, `5.14`, `6.10`, and `6.4`.
 - Ignore old claims that O1/O3/O5/V2/R1 were complete; use current follow-up beads and production tests as ground truth.
-- Fetch AzureFalcon Agent Mail first. Confirm RusticBirch released shared reservations, then tell BeigeHorizon to integrate the live authority hooks or perform the minimal integration yourself with exact reservations.
+- Fetch AzureFalcon Agent Mail first. BeigeHorizon now holds `production_run.ts` and is integrating the live daemon host; avoid that path until their report and reservation release.
 - Do not start a user service, enable lingering, send production mail, or promote Codex `0.145.0` without the relevant bead evidence and user authorization.
-- Success in the next turn is: `5.12` and `5.14` closed with focused tests, no reservation conflicts, full package/plugin regression green, and `6.10` newly ready with an explicit decision on the pinned Codex binary.
+- Success in the next turn is: `5.12` closed with authoritative daemon lifecycle tests, no reservation conflicts, full package/plugin regression green, and `6.10` newly ready with an explicit decision on the pinned Codex binary.
