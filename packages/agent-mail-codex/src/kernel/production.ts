@@ -157,6 +157,22 @@ export class ProductionThreadOwnerAdapter implements ThreadOwnerAdapter {
     });
   }
 
+  /** Full live state used by the daemon's ownership control plane. */
+  liveSnapshot(): {
+    threadId: string;
+    activeTurnId: string | null;
+    unresolvedRequestIds: string[];
+    owner: "headless" | "human" | "none";
+  } {
+    const session = this.#requireAcquired().snapshot();
+    return {
+      threadId: session.threadId,
+      activeTurnId: session.activeTurnId,
+      unresolvedRequestIds: [...session.openRequestIds],
+      owner: this.#owner.handoff.snapshot().owner,
+    };
+  }
+
   startTurn(input: ModelInput, idempotencyKey: string): Promise<Acceptance> {
     return this.#requireAcquired().startTurn(input, idempotencyKey);
   }
@@ -259,6 +275,8 @@ export interface ProductionKernel {
     transport: string;
   };
   kernel: IngressKernel;
+  /** Live daemon authority; null until kernel creates its sole owner. */
+  owner(): ProductionThreadOwnerAdapter | null;
   close(): Promise<void>;
 }
 
@@ -282,6 +300,7 @@ export function createProductionKernel(
   const store = new SqliteDurableStateStore({ path: options.statePath });
   const mailbox = new FsMailboxSource({ root: options.mailboxRoot });
   let ownerCreated = false;
+  let liveOwner: ProductionThreadOwnerAdapter | null = null;
   const deps: IngressKernelDeps = {
     store,
     mailbox,
@@ -297,10 +316,11 @@ export function createProductionKernel(
         );
       }
       ownerCreated = true;
-      return ProductionThreadOwnerAdapter.create({
+      liveOwner = ProductionThreadOwnerAdapter.create({
         ...options.owner,
         projectPath: options.binding.projectPath,
       });
+      return liveOwner;
     },
   };
   return {
@@ -313,6 +333,7 @@ export function createProductionKernel(
       transport: PRODUCTION_OWNER.transport,
     },
     kernel: new IngressKernel(deps),
+    owner: () => liveOwner,
     close: () => store.close(),
   };
 }
