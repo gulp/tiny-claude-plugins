@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -u
+
+root=${1:-/tmp/amc-r1-accel-20260729-2h-c}
+config="$root/config.json"
+db="$root/state.sqlite3"
+evidence="$root/evidence"
+
+binding=$(jq -r '.bindings | keys[0] // "unknown"' "$config" 2>/dev/null || printf 'unknown')
+agent=$(jq -r --arg binding "$binding" '.bindings[$binding].agent // "unknown"' "$config" 2>/dev/null || printf 'unknown')
+deadline=$(sed -n 's/^deadline_utc=//p' "$evidence/shadow.log" 2>/dev/null | tail -n 1)
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+if [[ -n $deadline ]]; then
+  remaining=$(( $(date -u -d "$deadline" +%s 2>/dev/null || printf 0) - $(date -u +%s) ))
+  (( remaining < 0 )) && remaining=0
+  remaining_text=$(printf '%02d:%02d:%02d' $((remaining / 3600)) $(((remaining % 3600) / 60)) $((remaining % 60)))
+else
+  remaining_text=unknown
+fi
+
+printf 'R1-accelerated shadow  %s\n' "$now"
+printf 'binding=%s  agent=%s  remaining=%s  deadline=%s\n\n' \
+  "$binding" "$agent" "$remaining_text" "${deadline:-unknown}"
+
+printf 'PROCESS\n'
+ps -eo pid=,ppid=,etimes=,stat=,args= |
+  awk -v binding="$binding" 'index($0, binding) && $0 !~ /awk -v binding/ { print }'
+printf '\n'
+
+printf 'LEASE\n'
+if [[ -r $db ]]; then
+  sqlite3 -readonly -header -column "$db" \
+    "select binding_id, owner_id, heartbeat_at, expires_at from leases where binding_id = '$binding';" \
+    2>/dev/null || printf 'lease query failed\n'
+else
+  printf 'state database missing: %s\n' "$db"
+fi
+printf '\n'
+
+printf 'STATE\n'
+if [[ -r $db ]]; then
+  sqlite3 -readonly -header -column "$db" "
+    select
+      (select count(*) from source_events where binding_id = '$binding') as events,
+      (select count(*) from batches where binding_id = '$binding') as batches,
+      (select count(*) from batches where binding_id = '$binding' and state = 'accepted') as accepted,
+      (select count(*) from batches where binding_id = '$binding' and state = 'dead_letter') as dead_letters,
+      coalesce((select last_message_id from cursors where binding_id = '$binding'), 0) as delivery_cursor;
+  " 2>/dev/null || printf 'state query failed\n'
+else
+  printf 'state database unavailable\n'
+fi
+printf '\n'
+
+printf 'FINAL ARTIFACT\n'
+artifact="$root/shadow/$binding.json"
+if [[ -r $artifact ]]; then
+  jq '{
+    ok,
+    observedCursor,
+    observedCount,
+    missedIds,
+    extraIds,
+    wrongScopeIds,
+    malformedSilent,
+    modelCalls,
+    deliveryCursor
+  }' "$artifact"
+else
+  printf 'pending (written when the shadow stops)\n'
+fi
+printf '\n'
+
+printf 'RECENT LOG\n'
+tail -n 12 "$evidence/shadow.log" 2>/dev/null || printf 'shadow log missing\n'
+printf '\n'
+
+printf 'HOURLY ARTIFACTS\n'
+find "$evidence" -maxdepth 1 -type f -name 'hourly-*' -printf '%TY-%Tm-%TdT%TH:%TM:%TS %f\n' \
+  2>/dev/null | sort | tail -n 8
