@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Repo-scoped cursor-agent launcher with a STABLE per-pane mcp-agent-mail identity.
+#
+# On PATH only inside this repo (via .envrc `PATH_add scripts`), so it shadows the
+# real `agent` launcher here and nowhere else.
+#
+# Identity handling (stable per-pane name, refuse-if-none) lives in
+# scripts/lib/worker-identity.sh. Override the no-identity refusal with
+# AGENT_ALLOW_NO_IDENTITY=1.
+#
+# Extra flag (consumed here, not passed through):
+#   --agent-name <name>   use this Agent Mail identity instead of minting one
+set -uo pipefail
+
+explicit_name=""
+forward=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent-name)
+      if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
+        echo "error: --agent-name requires a non-empty name" >&2
+        exit 2
+      fi
+      explicit_name="$2"
+      shift 2
+      ;;
+    --agent-name=*)
+      explicit_name="${1#--agent-name=}"
+      if [[ -z "$explicit_name" ]]; then
+        echo "error: --agent-name requires a non-empty name" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    *)
+      forward+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Resolve + export AGENT_NAME (per-pane stable or --agent-name); refuses if none.
+# shellcheck source=scripts/lib/worker-identity.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/worker-identity.sh"
+resolve_worker_identity cursor-agent "$explicit_name"
+
+# Stamp the resolved identity onto this pane for pane-scoped discovery.
+# No-op outside tmux.
+if [[ -n "${TMUX_PANE:-}" ]]; then
+  tmux set-option -p -t "$TMUX_PANE" @marshal_agent_name "$AGENT_NAME" 2>/dev/null || true
+fi
+
+# Exec the real cursor launcher (never this wrapper -> no recursion).
+# AGENT_REAL_LAUNCHER overrides the target (useful for testing / alt installs).
+real_agent="${AGENT_REAL_LAUNCHER:-$HOME/.local/bin/agent}"
+[[ -x "$real_agent" ]] || real_agent="$(command -v cursor-agent || true)"
+[[ -n "$real_agent" ]] || { echo "error: real cursor launcher not found (~/.local/bin/agent)" >&2; exit 127; }
+exec "$real_agent" "${forward[@]}"
