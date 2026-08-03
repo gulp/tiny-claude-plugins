@@ -42,7 +42,7 @@ done
 # Resolve + export AGENT_NAME (per-pane stable or --agent-name); refuses if none.
 # shellcheck source=scripts/lib/worker-identity.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/worker-identity.sh"
-resolve_worker_identity cursor-agent "$explicit_name"
+resolve_worker_identity cursor-agent "$explicit_name" || exit 1
 
 # Stamp the resolved identity onto this pane for pane-scoped discovery.
 # No-op outside tmux.
