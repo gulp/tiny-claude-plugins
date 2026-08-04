@@ -30,7 +30,18 @@ mode.
 
 ## Results
 
-### Haiku 4.5 (claude-haiku-4-5-20251001)
+### "Haiku 4.5" run — actually served by Opus 5 (see correction)
+
+**Correction (post-hoc, from the transcript):** this session was launched
+with `--model claude-haiku-4-5-20251001` and the statusline showed H4.5,
+but every assistant record in the transcript
+(`transcripts/bare-explicit-prompt-opus5-via-haiku-launch-34440e2b.jsonl`)
+says `"model":"claude-opus-5"` — including the very first `--recursive`
+attempt. The mid-run switch to auto mode (which haiku does not support —
+"auto mode unavailable for this model") appears to have silently swapped
+the whole session to Opus 5. Treat this run as an Opus 5 explicit-prompt
+datapoint, and treat statuslines as unreliable model attribution — always
+check the transcript's per-record `model` field.
 
 - First attempt: `rg -n --recursive permissionDecision .` — NOT the silent
   `-rn` trap; `--recursive` does not exist, rg errors loudly
@@ -69,8 +80,9 @@ mode.
 
 ## Summary
 
-Across four models with the neutral prompt (Sonnet 5, Opus 5, Fable 5) plus
-one explicit-ripgrep run (Haiku 4.5):
+Across the captured runs — neutral prompt on Sonnet 5, Opus 5, Fable 5,
+plus one explicit-ripgrep run that turned out to be Opus 5 (see the
+correction above; a true bare Haiku 4.5 run was NOT captured):
 
 1. **Neutral prompts never produced ripgrep.** All three neutral-prompt
    models defaulted to `grep -rn` / `grep -rhn` — flags that are correct
@@ -81,14 +93,25 @@ one explicit-ripgrep run (Haiku 4.5):
    The grep-flag habit these runs demonstrate (`-r` for recursion, `-h` for
    no-filename) is precisely the habit that, transplanted onto rg, produces
    the silent `--replace`/`--help` misfires the guard exists for.
-3. Haiku 4.5, when explicitly told to use ripgrep, produced a *loud* wrong
+3. Opus 5, when explicitly told to use ripgrep, produced a *loud* wrong
    flag (`--recursive`, which rg rejects) and self-recovered — it did not
    hit the silent cluster trap in this run. Per the nondeterminism caveat,
    one clean run is not proof of safety; prior guarded probes (2026-08-04,
    handoff §3) did catch haiku and sonnet generating `-r`/`-rn` shapes
-   under rg-flavored bait.
+   under rg-flavored bait (raw transcripts preserved under
+   `transcripts/dogfood-*/`).
 
 Net: the trap is an interaction between "prefer rg" instructions and
 grep-shaped flag habits. Bare models are safe by accident (they pick grep);
 rule-following models in this environment are the exposed population, which
 is why the guard hooks PreToolUse rather than relying on instructions.
+
+## Raw transcripts
+
+Under `transcripts/` (secret-swept before commit):
+
+- `bare-*` — the four bare-session runs above; per-record `model` field is
+  the authoritative attribution.
+- `dogfood-{haiku,sonnet}-guard-{on,off}/` — the 2026-08-03/04 guarded
+  subagent probe sessions rescued from tmpfs `/tmp/rg-dogfood-home-*`
+  before reboot could destroy them.
