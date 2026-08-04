@@ -15,6 +15,14 @@
       "description": "Read-only Agent Mail surface for swarm agents: auto-arms a background Monitor that notifies on each new message addressed to $AGENT_NAME, plus skills to toggle the watch and diagnose the setup — react to inbound mail without polling, and never mark it read.",
       "category": "multi-agent",
       "tags": ["agent-mail", "monitor", "swarm", "multi-agent"]
+    },
+    {
+      "name": "rg-flag-guard",
+      "source": "./plugins/rg-flag-guard",
+      "displayName": "rg Flag Guard",
+      "description": "PreToolUse hook that catches ripgrep's silent flag traps (-r is --replace, -h is --help — both exit 0 with wrong output) and denies with the corrected command pasted into the reason. Corpus-backed decision table, sees through timeout/xargs/sudo/rtk/snip wrappers, never false-positives on deliberate --replace idioms.",
+      "category": "safety",
+      "tags": ["ripgrep", "rg", "hook", "guard", "safety"]
     }
   ]
 }
