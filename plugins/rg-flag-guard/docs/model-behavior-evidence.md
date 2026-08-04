@@ -78,11 +78,32 @@ check the transcript's per-record `model` field.
   Narrated the `-h` choice explicitly ("filenames suppressed (-h)").
 - Verdict: no rg exposure.
 
+### Haiku 4.5 — true runs (claude-haiku-4-5-20251001 verified per-record;
+explicit prompt, 3 fresh sessions, manual mode, no toggle)
+
+- **Attempt 1**: `rg -n 'permissionDecision'` then `rg -n --no-filename` —
+  both correct.
+- **Attempt 2**: identical to attempt 1 — correct.
+- **Attempt 3 — silent flag-confusion captured**: for "filenames
+  suppressed" haiku ran `rg -N permissionDecision`. `-N` is
+  `--no-line-number`: output was `sample.txt:hello permissionDecision
+  world` — filename KEPT, line number DROPPED, the exact opposite of the
+  request. Haiku then reported, directly under its own pasted output: "the
+  -N flag suppresses the filename while keeping the line number." Confident
+  narration contradicting the evidence on the same screen. No error, no
+  self-correction.
+  Transcript: `transcripts/bare-explicit-haiku45-attempt3-silentN-3076428f.jsonl`.
+- Verdict: not the `-r`/`-h` cluster trap specifically, but the same
+  failure *class* the guard exists for — a silent short-flag misfire that
+  rg accepts without error, followed by a false report. 1 of 3 explicit-rg
+  runs failed silently; the failure survives even when the contradicting
+  output is quoted verbatim in the same message.
+
 ## Summary
 
 Across the captured runs — neutral prompt on Sonnet 5, Opus 5, Fable 5,
 plus one explicit-ripgrep run that turned out to be Opus 5 (see the
-correction above; a true bare Haiku 4.5 run was NOT captured):
+correction above) and three true Haiku 4.5 explicit-ripgrep runs:
 
 1. **Neutral prompts never produced ripgrep.** All three neutral-prompt
    models defaulted to `grep -rn` / `grep -rhn` — flags that are correct
@@ -100,6 +121,13 @@ correction above; a true bare Haiku 4.5 run was NOT captured):
    handoff §3) did catch haiku and sonnet generating `-r`/`-rn` shapes
    under rg-flavored bait (raw transcripts preserved under
    `transcripts/dogfood-*/`).
+
+4. **Haiku 4.5 demonstrated the failure class live, unguarded**: 1 of 3
+   explicit-rg runs silently misused `-N` and then described its own
+   quoted output backwards. Small models don't just mistype flags — they
+   confabulate the flag's meaning afterward, which is why a mechanical
+   PreToolUse denial (with corrected command) beats trusting the model to
+   notice.
 
 Net: the trap is an interaction between "prefer rg" instructions and
 grep-shaped flag habits. Bare models are safe by accident (they pick grep);
