@@ -12,7 +12,9 @@
 # two ever disagree on a verdict.
 
 setup() {
+  # Plugin layout: tests/../scripts/; ~/.claude/hooks mirror layout: tests/../
   HOOK="${BATS_TEST_DIRNAME}/../scripts/rg-flag-guard.sh"
+  [ -x "$HOOK" ] || HOOK="${BATS_TEST_DIRNAME}/../rg-flag-guard.sh"
   unset RG_FLAG_GUARD_DISABLE
 }
 
@@ -429,4 +431,38 @@ check_case() {
 @test "allow: deliberate replace idioms unaffected by masking" {
   check_case "rg '^v(.*)' -r '\$1' Cargo.toml" allow
   check_case "rg -r '' pat file" allow
+}
+
+# --------------------------------------------------------------------------
+# Separator-aware masking (2026-08-05 live false positive): a quoted pattern
+# containing | ; or & must not be split into fake pipeline/list segments —
+# 'FOO|BAR' /path was segmented at the |, the first fake segment had no
+# path, and the pathless-stdin deny fired with a truncated suggestion.
+# --------------------------------------------------------------------------
+
+@test "allow: quoted alternation pattern with path (single quotes)" {
+  check_case "rg -n 'LABEL_MODEL|PROGRESS|resume' scripts/label.py" allow
+}
+
+@test "allow: quoted alternation pattern with path (double quotes)" {
+  check_case 'rg -n "foo|bar" src/' allow
+}
+
+@test "allow: quoted pattern containing semicolon and ampersand" {
+  check_case "rg -n 'a;b&c' src/" allow
+}
+
+@test "allow: quoted alternation followed by real pipe" {
+  check_case "rg -n 'foo|bar' src/ | head -20" allow
+}
+
+@test "deny: real pathless segment still caught before a real pipe" {
+  run "$HOOK" --explain "rg -n 'foo|bar' | head"
+  [ "$status" -eq 2 ]
+}
+
+@test "deny: -rn with quoted alternation keeps pattern intact in suggestion" {
+  run "$HOOK" --explain "rg -rn 'foo|bar' src/"
+  [ "$status" -eq 2 ]
+  [[ "$(echo "$output" | jq -r .suggestion)" == "rg -n 'foo|bar' src/" ]]
 }

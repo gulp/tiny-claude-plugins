@@ -341,14 +341,19 @@ segment_classify() {
   return 0
 }
 
-# mask_quoted <cmd> — replace quoted spans that contain whitespace with
-# __QSTRn__ placeholders (originals kept in MASKS). Word-splitting only
-# mis-tokenizes quoted strings with internal whitespace — a pattern like
-# 'rg -r is --replace' would otherwise be read as flags (__playground-6wd
-# false positive, where the deny suggestion silently CORRUPTED the pattern).
-# Spans without whitespace ('$1', '', "*.rs") are left alone so the
-# deliberate-replace value inspection keeps working. Unbalanced quotes
-# simply stop matching: fail open.
+# mask_quoted <cmd> — replace quoted spans that contain whitespace OR a
+# shell separator character (| ; &) with __QSTRn__ placeholders (originals
+# kept in MASKS). Word-splitting only mis-tokenizes quoted strings with
+# internal whitespace — a pattern like 'rg -r is --replace' would otherwise
+# be read as flags (__playground-6wd false positive, where the deny
+# suggestion silently CORRUPTED the pattern) — and the pipeline split in
+# classify() mis-segments quoted strings with internal | ; & — a pattern
+# like 'FOO|BAR' /path was split at the | into a fake pathless segment,
+# denied as the stdin trap, and the suggestion truncated the pattern
+# (2026-08-05 live false positive). Spans without any of those characters
+# ('$1', '', "*.rs") are left alone so the deliberate-replace value
+# inspection keeps working. Unbalanced quotes simply stop matching: fail
+# open.
 MASKS=()
 MASKED_CMD=""
 mask_quoted() {
@@ -356,7 +361,7 @@ mask_quoted() {
   MASKS=()
   # Anchored to token boundaries so the space BETWEEN two adjacent quoted
   # tokens ('$1' 'v(.*)') is never itself taken as a quoted span.
-  local re="(^|[[:space:];&|=])('[^']*[[:space:]][^']*'|\"[^\"]*[[:space:]][^\"]*\")([[:space:];&|]|$)"
+  local re="(^|[[:space:];&|=])('[^']*[[:space:];&|][^']*'|\"[^\"]*[[:space:];&|][^\"]*\")([[:space:];&|]|$)"
   while [[ "$cmd" =~ $re ]]; do
     MASKS+=("${BASH_REMATCH[2]}")
     cmd="${cmd/"${BASH_REMATCH[0]}"/${BASH_REMATCH[1]}__QSTR$((${#MASKS[@]} - 1))__${BASH_REMATCH[3]}}"
