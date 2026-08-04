@@ -99,6 +99,29 @@ explicit prompt, 3 fresh sessions, manual mode, no toggle)
   runs failed silently; the failure survives even when the contradicting
   output is quoted verbatim in the same message.
 
+### Older tiers — ablation across generations (explicit prompt, one fresh
+session each, per-record model verified)
+
+Max-plan probing (`/v1/models` + live completions with `modelUsage` checks)
+showed the oldest genuinely-served tiers are Opus 4.5 and Sonnet 4.5 —
+anything older is rejected or silently remapped to Opus 5 (e.g. requesting
+`claude-opus-4-1-20250805`, though listed, serves `claude-opus-5`).
+
+| Model | Filename-suppression choice | Result |
+|-------|------------------------------|--------|
+| Opus 4.5 (20251101) | `rg -n --no-filename` | correct |
+| Opus 4.6 | `rg -nI` — exact correct short flag | correct |
+| Opus 4.7 | `rg -nI` | correct |
+| Opus 4.8 | `rg --no-filename -n` | correct |
+| Sonnet 4.5 (20250929) | `rg --no-filename -n` | correct |
+| Sonnet 4.6 | `rg -n --no-filename` | correct |
+
+All six avoided both silent traps in one run each. Only Opus 4.6/4.7
+reached for the short `-I`; the rest used the long flag. No generation of
+the Opus/Sonnet lines available on this plan produced `-r`, `-h`, or the
+`-N` confusion — across the whole ablation, the only silent failure came
+from Haiku 4.5 (attempt 3 above).
+
 ## Summary
 
 Across the captured runs — neutral prompt on Sonnet 5, Opus 5, Fable 5,
