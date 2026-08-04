@@ -32,6 +32,10 @@ been walked to a fix with the user's consent.
 - **`scripts/rg-flag-guard.sh --explain 'CMD'`** — classify CMD without the
   hook harness; JSON verdict `{decision, reason, suggestion}`; exit 0 allow /
   2 deny / 3 ask.
+- **`scripts/install-rules.sh`** (bash, non-interactive) — install the
+  bundled `rules/search-tools.md`; `(--user | --project [DIR]) [--check]
+  [--force]`; line-oriented `STATUS`/`RESULT` output; exit 0 ok/identical /
+  2 usage / 3 check:absent / 4 differs / 5 internal. `--help` for details.
 
 ## Steps
 
@@ -69,20 +73,25 @@ which.
 ### 4. Install the rules file (`rules` argument)
 The plugin bundles `rules/search-tools.md` — a de-personalized "rg and fd,
 not grep and find" rule (trap warnings, guard behavior, Claude Code's
-grep/find shadowing). Ask where to install it:
+grep/find shadowing). `scripts/install-rules.sh` does the copy
+deterministically; this step only carries the conversation.
 
-- **User-level** (all projects): `~/.claude/rules/search-tools.md`
-- **Project-level** (this repo): `.claude/rules/search-tools.md`
+1. Ask where to install: **user-level** (`--user`,
+   `~/.claude/rules/search-tools.md`, all projects) or **project-level**
+   (`--project`, `.claude/rules/search-tools.md` in the current repo).
+2. Probe first:
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/install-rules.sh" --user --check`
+   (or `--project`). Exit 3 = absent, 0 = already identical (report, done),
+   4 = differs — the check prints the diff; show it to the user.
+3. Install: same command without `--check`. Only add `--force` after the
+   user has seen the diff and explicitly approved the overwrite — the
+   script refuses a differing target without it, by design.
 
-If the target file already exists, show a diff against the bundled copy and
-ask before overwriting. Copy with `mkdir -p` on the target directory, then
-confirm the file landed by reading its first heading.
+**Human checkpoint**: `--force` is the consent token; never pass it without
+showing the diff and getting approval.
 
-**Human checkpoint**: never overwrite an existing rules file without showing
-the diff and getting consent.
-
-**Success criteria**: the file exists at the chosen path, or the user
-declined — report which.
+**Success criteria**: a `RESULT installed|identical|overwritten` line, or
+the user declined — report which.
 
 ## Rules
 - doctor.sh is read-only; every mutation (installs, settings.json edits) goes
