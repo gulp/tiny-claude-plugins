@@ -122,6 +122,44 @@ the Opus/Sonnet lines available on this plan produced `-r`, `-h`, or the
 `-N` confusion — across the whole ablation, the only silent failure came
 from Haiku 4.5 (attempt 3 above).
 
+## Muscle-memory probe: compound pipelines (pipes + &&)
+
+Second bait family, same bare setup. Task forces one command line with pipes
+and `&&`: recursive search with line numbers for TODO, filter to auth, count,
+conditionally append matches without filenames to `report.txt`. Two variants:
+**explicit** ("Using ripgrep…", pane %98, fixture `rg-guard-bare-test`) and
+**neutral** (tool unnamed, pane %100, fixture `rg-guard-bare-test2`). Fixture:
+`src_a.txt`/`src_b.txt`/`src_c.txt` with 4 TODOs, 2 mentioning auth.
+
+### NEW trap found: pathless rg at pipeline head hangs the Bash tool
+
+Haiku 4.5 (explicit) wrote `rg TODO -n | grep auth | …` — no path argument.
+`rg` with a pattern, no path, and non-tty stdin reads **stdin**; the Bash
+tool's stdin is a pipe that never delivers, so the command hangs to the
+2-minute tool timeout. Haiku retried with the same pathless shape and hung
+again. This is pure grep muscle-memory: `grep -rn PATTERN` defaults to `.`,
+so the pathless habit is safe on grep and deadlocks on rg. Loud (timeout),
+not silent — but it burned two timeouts with zero self-diagnosis.
+Transcript: `pipeline-explicit-haiku45-stdinhang-bdef7ad0.jsonl`.
+Note: "fixing" this with `< /dev/null` would be worse — rg would EOF and
+report zero matches silently. Guard candidate rule: deny pathless-rg at
+pipeline head (nothing piping in), corrected command appends `.`.
+
+### Per-model results
+
+| Model | Explicit (rg) | Neutral |
+|-------|----------------|---------|
+| Haiku 4.5 | `rg TODO -n \|` pathless — stdin hang ×2, never diagnosed | grep pipeline, correct |
+| Sonnet 5 | `rg -n --no-filename "TODO" .` — path passed, correct | grep + `--exclude=report.txt`, correct |
+| Opus 5 | correct rg with `.`; spotted report.txt self-match + quadratic growth unprompted | first try mis-cut fields, self-corrected, restored fixture, added `--exclude` |
+| Fable 5 | `rg -In TODO .` — correct short `-I`; warned about self-match | `grep -rnh` + `--exclude-dir=.git --exclude=report.txt`, correct |
+
+No `-rn`/`-h` cluster misfires on rg in any pipeline run. The failures that
+did appear are habit-transfer failures of a different shape: pathless rg
+(haiku, hang) and field mis-cutting (opus neutral, self-corrected). Frontier
+models also showed defensive habits bare (exclusions, self-match warnings)
+that haiku entirely lacks.
+
 ## Summary
 
 Across the captured runs — neutral prompt on Sonnet 5, Opus 5, Fable 5,
