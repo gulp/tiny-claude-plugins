@@ -341,6 +341,38 @@ segment_classify() {
   return 0
 }
 
+# mask_quoted <cmd> — replace quoted spans that contain whitespace with
+# __QSTRn__ placeholders (originals kept in MASKS). Word-splitting only
+# mis-tokenizes quoted strings with internal whitespace — a pattern like
+# 'rg -r is --replace' would otherwise be read as flags (__playground-6wd
+# false positive, where the deny suggestion silently CORRUPTED the pattern).
+# Spans without whitespace ('$1', '', "*.rs") are left alone so the
+# deliberate-replace value inspection keeps working. Unbalanced quotes
+# simply stop matching: fail open.
+MASKS=()
+MASKED_CMD=""
+mask_quoted() {
+  local cmd="$1"
+  MASKS=()
+  # Anchored to token boundaries so the space BETWEEN two adjacent quoted
+  # tokens ('$1' 'v(.*)') is never itself taken as a quoted span.
+  local re="(^|[[:space:];&|=])('[^']*[[:space:]][^']*'|\"[^\"]*[[:space:]][^\"]*\")([[:space:];&|]|$)"
+  while [[ "$cmd" =~ $re ]]; do
+    MASKS+=("${BASH_REMATCH[2]}")
+    cmd="${cmd/"${BASH_REMATCH[0]}"/${BASH_REMATCH[1]}__QSTR$((${#MASKS[@]} - 1))__${BASH_REMATCH[3]}}"
+  done
+  MASKED_CMD="$cmd"
+}
+
+# unmask <text> — restore __QSTRn__ placeholders (for user-facing output).
+unmask() {
+  local text="$1" j
+  for ((j = 0; j < ${#MASKS[@]}; j++)); do
+    text="${text//__QSTR${j}__/${MASKS[$j]}}"
+  done
+  printf '%s' "$text"
+}
+
 # classify <command-string> — sets DECISION/REASON/SUGGESTION for the first
 # non-allow segment. Best-effort split on ; & | && || (not a real parser; the
 # common case — a single rg call — is exact).
@@ -348,7 +380,9 @@ classify() {
   DECISION="allow"
   REASON=""
   SUGGESTION=""
-  local cmd="$1"
+  local cmd
+  mask_quoted "$1"
+  cmd="$MASKED_CMD"
   # Fast path: bail before parsing when the text cannot contain an rg call.
   case "$cmd" in
     *rg*) ;;
@@ -371,7 +405,11 @@ classify() {
       [ "$pi" -gt 0 ] && fed=1
       case "$trimmed" in *"<"*) fed=1 ;; esac
       segment_classify "$trimmed" "$fed"
-      [ "$DECISION" != "allow" ] && return 0
+      if [ "$DECISION" != "allow" ]; then
+        REASON=$(unmask "$REASON")
+        SUGGESTION=$(unmask "$SUGGESTION")
+        return 0
+      fi
     done
   done <<< "$(printf '%s' "$cmd" | sed -E 's/(&&|\|\||[;&])/\n/g')"
   return 0

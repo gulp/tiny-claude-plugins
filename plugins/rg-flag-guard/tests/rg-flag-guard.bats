@@ -395,3 +395,38 @@ check_case() {
   check_case "rg -e pat src/" allow
   check_case "rg --glob '*.rs' TODO src/" allow
 }
+
+# --------------------------------------------------------------------------
+# Quote-aware masking (__playground-6wd): flag-like words inside quoted
+# multi-word strings are pattern text, not flags — and suggestions must
+# restore the original quoted string, never a corrupted one.
+# --------------------------------------------------------------------------
+
+@test "allow: quoted pattern containing ' -r <word>' (single quotes)" {
+  check_case "rg -c 'rg -r is --replace' README.md" allow
+}
+
+@test "allow: quoted pattern containing ' -r <word>' (double quotes)" {
+  check_case 'rg -c "rg -r is --replace" README.md' allow
+}
+
+@test "allow: quoted pattern containing ' -h ' text" {
+  check_case "rg -n 'use -h for help' docs/" allow
+}
+
+@test "deny suggestion restores quoted multi-word pattern verbatim" {
+  run "$HOOK" --explain "rg -rn 'two words' src/"
+  [ "$status" -eq 2 ]
+  [[ "$(echo "$output" | jq -r .suggestion)" == "rg -n 'two words' src/" ]]
+}
+
+@test "pathless deny suggestion restores quoted multi-word pattern" {
+  run "$HOOK" --explain "rg 'a b'"
+  [ "$status" -eq 2 ]
+  [[ "$(echo "$output" | jq -r .suggestion)" == "rg 'a b' ." ]]
+}
+
+@test "allow: deliberate replace idioms unaffected by masking" {
+  check_case "rg '^v(.*)' -r '\$1' Cargo.toml" allow
+  check_case "rg -r '' pat file" allow
+}
