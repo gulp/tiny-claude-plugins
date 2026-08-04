@@ -81,6 +81,22 @@ claude plugin install rg-flag-guard@tiny-claude-plugins --scope user
 If you previously registered the script manually in `settings.json`, remove
 that registration — otherwise the hook fires twice (harmless, but noisy).
 
+## Doctor
+
+`/rg-flag-guard:rg-doctor` runs a full health check via the bundled
+`scripts/doctor.sh` (read-only): ripgrep/jq presence, ripgrep version drift
+against the guard's value-flag table, live deny/allow/`--explain` probes,
+kill-switch state, and duplicate manual registration. Arguments:
+
+- `/rg-flag-guard:rg-doctor install` — interactive dependency install guide
+  (detects pacman/apt/dnf/brew; always asks before running anything)
+- `/rg-flag-guard:rg-doctor explain <cmd>` — classify a command and translate
+  the verdict
+
+```bash
+scripts/doctor.sh          # standalone; exit 0 pass / 1 warnings / 2 failures
+```
+
 ## Debugging a verdict
 
 ```bash
