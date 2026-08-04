@@ -92,10 +92,23 @@ kill-switch state, and duplicate manual registration. Arguments:
   (detects pacman/apt/dnf/brew; always asks before running anything)
 - `/rg-flag-guard:rg-doctor explain <cmd>` — classify a command and translate
   the verdict
+- `/rg-flag-guard:rg-doctor rules` — install the bundled
+  `rules/search-tools.md` into `~/.claude/rules/` (all projects) or the
+  project's `.claude/rules/` (asks which; diffs before overwriting)
 
 ```bash
 scripts/doctor.sh          # standalone; exit 0 pass / 1 warnings / 2 failures
 ```
+
+## Rules file (opt-in, zero session cost)
+
+`rules/search-tools.md` is a bundled context rule — "rg and fd, not grep and
+find" — covering the flag traps, the guard's behavior, and Claude Code's
+grep/find shadowing. It is deliberately **not** auto-injected: a SessionStart
+hook would tax every session's context window, and the hook already enforces
+the trap behaviorally. Install it where you want it with
+`/rg-flag-guard:rg-doctor rules`; a single rules file is the smallest
+possible footprint, loaded by Claude Code's own rules mechanism.
 
 ## Debugging a verdict
 
