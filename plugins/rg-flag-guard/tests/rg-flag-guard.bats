@@ -69,7 +69,7 @@ check_case() {
 }
 
 @test "allow: standalone -r with \$-capture replacement" {
-  check_case "rg '^v(.*)' -r '\$1'" allow
+  check_case "rg '^v(.*)' -r '\$1' Cargo.toml" allow
 }
 
 @test "allow: standalone -r with \${...} replacement" {
@@ -88,14 +88,14 @@ check_case() {
   check_case "rg -n \"permissionDecision\" -r ~/.claude/hooks" deny
 }
 
-@test "allow: long-form --replace" { check_case "rg --replace X foo" allow; }
+@test "allow: long-form --replace" { check_case "rg --replace X foo src/" allow; }
 
 @test "allow: bare -h help request" { check_case "rg -h" allow; }
 
-@test "allow: -In, the real no-filename flag" { check_case "rg -In foo" allow; }
+@test "allow: -In, the real no-filename flag" { check_case "rg -In foo src/" allow; }
 
 @test "allow: flags after a bare -- terminator" {
-  check_case "rg -n -- -rn" allow
+  check_case "rg -n -- pat file" allow
 }
 
 # --------------------------------------------------------------------------
@@ -115,7 +115,7 @@ check_case() {
 }
 
 @test "allow: nested wrappers with deliberate replace" {
-  check_case "FOO=1 sudo timeout 5s snip run -- rg -r '\$1' 'v(.*)'" allow
+  check_case "FOO=1 sudo timeout 5s snip run -- rg -r '\$1' 'v(.*)' f" allow
 }
 
 @test "allow: post-rg -- still respected through snip" {
@@ -143,7 +143,7 @@ check_case() {
 }
 
 @test "allow: rtk rg with deliberate \$-capture replace" {
-  check_case "rtk rg '^v(.*)' -r '\$1'" allow
+  check_case "rtk rg '^v(.*)' -r '\$1' f" allow
 }
 
 @test "allow: rtk grep -rn (grep semantics are that subcommand's contract)" {
@@ -320,4 +320,78 @@ check_case() {
   run bash -c "RG_FLAG_GUARD_DISABLE=1 '$HOOK' --explain 'rg -rn foo'"
   [ "$status" -eq 0 ]
   printf '%s' "$output" | jq -e '.decision == "allow"'
+}
+
+# --------------------------------------------------------------------------
+# Pathless-rg stdin-hang trap (__playground-0n3): pattern but no path and no
+# stdin source reads stdin forever; the Bash tool never delivers stdin.
+# --------------------------------------------------------------------------
+
+@test "deny: pathless rg alone (rg -n pat)" {
+  check_case "rg -n pat" deny
+}
+
+@test "deny: pathless rg at pipeline head (the live Haiku shape)" {
+  check_case "rg TODO -n | grep auth" deny
+}
+
+@test "deny: pathless rg after && (stdin not fed by &&)" {
+  check_case "echo x && rg pat" deny
+}
+
+@test "deny: pathless rg before ; separator" {
+  check_case "rg -c pat; ls" deny
+}
+
+@test "deny: pathless rg with -e pattern flag" {
+  check_case "rg -e pat" deny
+}
+
+@test "deny: pathless rg through wrappers (timeout, snip)" {
+  check_case "timeout 20s rg -n pat" deny
+  check_case "snip run -- rg pat" deny
+}
+
+@test "deny: pathless rg where -g consumed the only would-be path" {
+  check_case "rg -g'*.rs' foo" deny
+}
+
+@test "pathless deny suggestion appends a dot path" {
+  run "$HOOK" --explain 'rg -n pat'
+  [ "$status" -eq 2 ]
+  [[ "$(echo "$output" | jq -r .suggestion)" == "rg -n pat ." ]]
+}
+
+@test "pathless deny reason forbids /dev/null workaround" {
+  run "$HOOK" --explain 'rg TODO -n | grep auth'
+  [ "$status" -eq 2 ]
+  [[ "$(echo "$output" | jq -r .reason)" == *"/dev/null"* ]]
+}
+
+@test "allow: mid-pipeline rg (stdin fed by pipe)" {
+  check_case "cat f | rg pat" allow
+}
+
+@test "allow: pathless rg with < redirection" {
+  check_case "rg pat < file" allow
+}
+
+@test "allow: explicit - stdin operand" {
+  check_case "rg pat -" allow
+}
+
+@test "allow: xargs-fed rg (paths arrive as arguments)" {
+  check_case "find . -name '*.ts' | xargs rg pat" allow
+}
+
+@test "allow: rg --files and --type-list need no path" {
+  check_case "rg --files" allow
+  check_case "rg --files | head" allow
+  check_case "rg --type-list" allow
+}
+
+@test "allow: pattern plus path (canonical) untouched by pathless rule" {
+  check_case "rg -n pat ." allow
+  check_case "rg -e pat src/" allow
+  check_case "rg --glob '*.rs' TODO src/" allow
 }
