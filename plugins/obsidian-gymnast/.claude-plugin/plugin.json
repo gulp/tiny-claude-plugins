@@ -1,0 +1,11 @@
+{
+  "name": "obsidian-gymnast",
+  "version": "0.1.0",
+  "description": "Skills that let agents drive the Obsidian CLI — search, frontmatter-as-JSON, appends — plus the flag and argv traps that silently break it.",
+  "author": {
+    "name": "Yekta Gurel",
+    "email": "me@yektagurel.com"
+  },
+  "license": "MIT",
+  "keywords": ["obsidian", "cli", "notes", "web-clipper", "frontmatter"]
+}

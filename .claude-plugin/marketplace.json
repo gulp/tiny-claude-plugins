@@ -23,6 +23,14 @@
       "description": "PreToolUse hook that catches ripgrep's silent flag traps (-r is --replace, -h is --help — both exit 0 with wrong output) and denies with the corrected command pasted into the reason. Corpus-backed decision table, sees through timeout/xargs/sudo/rtk/snip wrappers, never false-positives on deliberate --replace idioms.",
       "category": "safety",
       "tags": ["ripgrep", "rg", "hook", "guard", "safety"]
+    },
+    {
+      "name": "obsidian-gymnast",
+      "source": "./plugins/obsidian-gymnast",
+      "displayName": "Obsidian Gymnast",
+      "description": "Skills that let agents drive the Obsidian CLI: the command map (search, frontmatter-as-JSON, appends) plus the silent traps — single-dash flags parsed as CLI commands, restart reusing stale argv, multi-word searches returning empty with exit 0 — with rg/fd fallbacks when the app isn't running.",
+      "category": "productivity",
+      "tags": ["obsidian", "cli", "notes", "web-clipper", "frontmatter"]
     }
   ]
 }
