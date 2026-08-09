@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+# plugin-drift — compare Claude Code marketplace install layers and fail loud.
+#
+# Layers:
+#   L0  worktree   git -C <repo> rev-parse HEAD
+#   L1  remote     git -C <repo> rev-parse origin/main
+#   L2  clone      git -C ~/.claude/plugins/marketplaces/<mkt> rev-parse HEAD
+#   L3  cache      ~/.claude/plugins/cache/<mkt>/<plugin>/<version>/
+#
+# Gaps:
+#   G2  L0 != L1   unpushed work            → git push
+#   G1  L2 version missing from L3 cache    → /reload-plugins
+#       L1 != L2   marketplace fetch lag    → /plugin marketplace update <mkt>
+#
+# Diagnostics go to stdout (Monitors only surface stdout). Clean run is silent.
+#
+# Exit codes:
+#   0    clean — no drift
+#   1    drift detected (one or more G1/G2 gaps)
+#   2    bad arguments
+#   3    missing marketplace clone / unregistered name / unusable repo
+#   127  missing required dependency (git or jq)
+set -eu
+
+usage() {
+	cat <<'EOF'
+plugin-drift — compare worktree/remote/marketplace-clone/cache and fail loud.
+
+Usage:
+  plugin-drift <marketplace> [--repo <path>] [--skip-g2] [-h|--help]
+
+Arguments:
+  <marketplace>   Marketplace name (must match .claude-plugin/marketplace.json
+                  "name" and the ~/.claude/plugins/marketplaces/<name> clone).
+
+Options:
+  --repo <path>   Marketplace worktree (default: $CLAUDE_PROJECT_DIR or cwd).
+  --skip-g2       Skip L0-vs-L1 (unpushed) check. Use from pre-push: the push
+                  itself remediates G2, so failing on it would block every push.
+  -h, --help      Show this help.
+
+Exit codes:
+  0    clean (prints nothing)
+  1    drift detected
+  2    bad arguments
+  3    missing marketplace clone, unregistered name, or unusable repo
+  127  missing git or jq
+
+Output (on failure) follows the doctor idiom:
+  [FAIL] <check> — <what is wrong>
+      → <remediation command>
+EOF
+}
+
+fail_usage() {
+	printf '%s\n' "$1" 
+	usage
+	exit 2
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+if ! have git; then
+	printf '[FAIL] dependency — git is not on PATH\n    → install git and retry\n'
+	exit 127
+fi
+if ! have jq; then
+	printf '[FAIL] dependency — jq is not on PATH\n    → install jq and retry\n'
+	exit 127
+fi
+
+marketplace=""
+repo=""
+skip_g2=0
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-h|--help)
+			usage
+			exit 0
+			;;
+		--repo)
+			[ $# -ge 2 ] || fail_usage "--repo requires a path"
+			repo=$2
+			shift 2
+			;;
+		--skip-g2)
+			skip_g2=1
+			shift
+			;;
+		-*)
+			fail_usage "unknown option: $1"
+			;;
+		*)
+			if [ -n "$marketplace" ]; then
+				fail_usage "unexpected argument: $1"
+			fi
+			marketplace=$1
+			shift
+			;;
+	esac
+done
+
+[ -n "$marketplace" ] || fail_usage "marketplace name is required"
+
+if [ -z "$repo" ]; then
+	repo=${CLAUDE_PROJECT_DIR:-$(pwd)}
+fi
+
+# Resolve to absolute path without requiring the directory to be the git top.
+if [ ! -d "$repo" ]; then
+	printf '[FAIL] repo — path is not a directory: %s\n    → pass --repo <marketplace-worktree>\n' "$repo"
+	exit 3
+fi
+repo=$(CDPATH= cd -- "$repo" && pwd)
+
+claude_home=${CLAUDE_CONFIG_DIR:-${HOME:?HOME unset}/.claude}
+clone_dir=$claude_home/plugins/marketplaces/$marketplace
+cache_root=$claude_home/plugins/cache/$marketplace
+
+manifest=$repo/.claude-plugin/marketplace.json
+if [ ! -f "$manifest" ]; then
+	printf '[FAIL] repo — no .claude-plugin/marketplace.json under %s\n    → run from the marketplace worktree or pass --repo\n' "$repo"
+	exit 3
+fi
+
+manifest_name=$(jq -r '.name // empty' "$manifest")
+if [ -z "$manifest_name" ]; then
+	printf '[FAIL] repo — marketplace.json has no "name" field\n    → fix %s\n' "$manifest"
+	exit 3
+fi
+if [ "$manifest_name" != "$marketplace" ]; then
+	printf '[FAIL] repo — marketplace name mismatch: arg=%s manifest=%s\n    → pass the manifest name (%s) or use the matching worktree\n' \
+		"$marketplace" "$manifest_name" "$manifest_name"
+	exit 3
+fi
+
+if [ ! -d "$clone_dir/.git" ] && [ ! -f "$clone_dir/.git" ]; then
+	# Distinguish "never registered" from a broken empty dir.
+	if [ ! -e "$clone_dir" ]; then
+		printf '[FAIL] marketplace-clone — unregistered marketplace %s (no clone at %s)\n    → claude plugin marketplace add <owner/%s> --scope project\n' \
+			"$marketplace" "$clone_dir" "$marketplace"
+	else
+		printf '[FAIL] marketplace-clone — %s exists but is not a git checkout\n    → claude plugin marketplace add <owner/%s> --scope project\n' \
+			"$clone_dir" "$marketplace"
+	fi
+	exit 3
+fi
+
+if [ ! -d "$cache_root" ]; then
+	printf '[FAIL] cache — missing cache dir %s\n    → claude plugin install <plugin>@%s --scope project\n' \
+		"$cache_root" "$marketplace"
+	exit 3
+fi
+
+short() {
+	# Prefer short SHA for readable FAIL lines; fall back to full.
+	git -C "$1" rev-parse --short "$2" 2>/dev/null || git -C "$1" rev-parse "$2"
+}
+
+full() {
+	git -C "$1" rev-parse "$2"
+}
+
+drift=0
+fail_line() {
+	# $1=check $2=detail $3=remediation
+	printf '[FAIL] %s — %s\n    → %s\n' "$1" "$2" "$3"
+	drift=1
+}
+
+# --- G2: unpushed work (L0 vs L1) -------------------------------------------
+if [ "$skip_g2" -eq 0 ]; then
+	if ! l0=$(full "$repo" HEAD 2>/dev/null); then
+		printf '[FAIL] worktree — cannot resolve HEAD in %s\n    → ensure --repo points at a git worktree\n' "$repo"
+		exit 3
+	fi
+	if ! l1=$(full "$repo" origin/main 2>/dev/null); then
+		printf '[FAIL] remote — cannot resolve origin/main in %s\n    → git remote add/fetch origin, or create origin/main\n' "$repo"
+		exit 3
+	fi
+	if [ "$l0" != "$l1" ]; then
+		fail_line "unpushed" \
+			"G2: worktree HEAD $(short "$repo" HEAD) != origin/main $(short "$repo" origin/main) — commits exist only locally" \
+			"git push"
+	fi
+fi
+
+# --- fetch lag (L1 vs L2) ---------------------------------------------------
+if ! l1=$(full "$repo" origin/main 2>/dev/null); then
+	printf '[FAIL] remote — cannot resolve origin/main in %s\n    → git remote add/fetch origin, or create origin/main\n' "$repo"
+	exit 3
+fi
+if ! l2=$(full "$clone_dir" HEAD 2>/dev/null); then
+	printf '[FAIL] marketplace-clone — cannot resolve HEAD in %s\n    → /plugin marketplace update %s\n' "$clone_dir" "$marketplace"
+	exit 3
+fi
+if [ "$l1" != "$l2" ]; then
+	fail_line "marketplace-fetch" \
+		"L1 origin/main $(short "$repo" origin/main) != L2 clone HEAD $(short "$clone_dir" HEAD) — marketplace clone lags remote" \
+		"/plugin marketplace update $marketplace"
+fi
+
+# --- G1: L2 plugin versions missing from L3 cache ---------------------------
+# Read plugin list + sources from the L2 clone (what an install would see after
+# marketplace update), and require each declared version to exist under L3.
+plugins_json=$(jq -c '.plugins // []' "$clone_dir/.claude-plugin/marketplace.json")
+plugin_count=$(printf '%s' "$plugins_json" | jq 'length')
+if [ "$plugin_count" -eq 0 ]; then
+	fail_line "plugins" \
+		"marketplace clone declares zero plugins" \
+		"inspect $clone_dir/.claude-plugin/marketplace.json"
+fi
+
+i=0
+while [ "$i" -lt "$plugin_count" ]; do
+	entry=$(printf '%s' "$plugins_json" | jq -c --argjson i "$i" '.[$i]')
+	pname=$(printf '%s' "$entry" | jq -r '.name // empty')
+	psource=$(printf '%s' "$entry" | jq -r '.source // empty')
+	i=$((i + 1))
+
+	if [ -z "$pname" ] || [ -z "$psource" ]; then
+		fail_line "plugins" \
+			"marketplace entry missing name/source: $entry" \
+			"fix $clone_dir/.claude-plugin/marketplace.json"
+		continue
+	fi
+
+	# Resolve plugin.json relative to the L2 clone.
+	case "$psource" in
+		./*) plugin_json=$clone_dir/${psource#./}/.claude-plugin/plugin.json ;;
+		/*)  plugin_json=$psource/.claude-plugin/plugin.json ;;
+		*)   plugin_json=$clone_dir/$psource/.claude-plugin/plugin.json ;;
+	esac
+
+	if [ ! -f "$plugin_json" ]; then
+		fail_line "plugin-manifest" \
+			"L2 clone missing plugin.json for $pname at $plugin_json" \
+			"/plugin marketplace update $marketplace"
+		continue
+	fi
+
+	version=$(jq -r '.version // empty' "$plugin_json")
+	if [ -z "$version" ]; then
+		# Subdir plugins without version land in a single "unknown" cache bucket
+		# that never invalidates — treat as a loud gap, not a pass.
+		fail_line "plugin-version" \
+			"G1: $pname has no version in plugin.json (subdir plugins cache as 'unknown' and never invalidate)" \
+			"set version in $pname/.claude-plugin/plugin.json and bump on every release"
+		continue
+	fi
+
+	cache_dir=$cache_root/$pname/$version
+	if [ ! -d "$cache_dir" ]; then
+		# List what is cached so the remediation is actionable.
+		cached=""
+		if [ -d "$cache_root/$pname" ]; then
+			cached=$(ls -1 "$cache_root/$pname" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+		fi
+		if [ -n "$cached" ]; then
+			fail_line "cache" \
+				"G1: $pname@$version not in cache (have: $cached) — this session may still be on a stale install" \
+				"/reload-plugins"
+		else
+			fail_line "cache" \
+				"G1: $pname@$version not in cache (no versions under $cache_root/$pname) — plugin may be uninstalled" \
+				"claude plugin install ${pname}@${marketplace} --scope project && /reload-plugins"
+		fi
+	fi
+done
+
+if [ "$drift" -ne 0 ]; then
+	exit 1
+fi
+exit 0

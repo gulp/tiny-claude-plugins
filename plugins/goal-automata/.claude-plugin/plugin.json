@@ -1,0 +1,9 @@
+{
+  "name": "goal-automata",
+  "version": "0.1.0",
+  "description": "Turn a written plan into a self-enforcing run: compiles the plan's acceptance criteria into a machine-checkable rubric, then a Stop hook blocks the session from stopping until every check passes on disk — feeding failing checks back as the next marching order. Hash-pinned judge, bounded enforcement, human escape verb.",
+  "author": {
+    "name": "Yekta Gurel",
+    "email": "me@yektagurel.com"
+  }
+}

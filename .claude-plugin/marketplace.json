@@ -14,7 +14,26 @@
       "displayName": "Agent Mail",
       "description": "Read-only Agent Mail surface for swarm agents: auto-arms a background Monitor that notifies on each new message addressed to $AGENT_NAME, plus skills to toggle the watch and diagnose the setup — react to inbound mail without polling, and never mark it read.",
       "category": "multi-agent",
-      "tags": ["agent-mail", "monitor", "swarm", "multi-agent"]
+      "tags": [
+        "agent-mail",
+        "monitor",
+        "swarm",
+        "multi-agent"
+      ]
+    },
+    {
+      "name": "goal-automata",
+      "source": "./plugins/goal-automata",
+      "displayName": "Goal Automata",
+      "description": "Turn a written plan into a self-enforcing run: /goal-automata @plan.md compiles the plan's acceptance criteria into a machine-checkable rubric, then a Stop hook blocks the session from stopping until every check passes on disk — failing checks feed back as the next marching order. Hash-pinned judge, bounded enforcement (deadline + attempt cap), human escape verb.",
+      "category": "automation",
+      "tags": [
+        "goal",
+        "stop-hook",
+        "autonomous",
+        "rubric",
+        "ralph"
+      ]
     },
     {
       "name": "rg-flag-guard",
@@ -22,7 +41,13 @@
       "displayName": "rg Flag Guard",
       "description": "PreToolUse hook that catches ripgrep's silent flag traps (-r is --replace, -h is --help — both exit 0 with wrong output) and denies with the corrected command pasted into the reason. Corpus-backed decision table, sees through timeout/xargs/sudo/rtk/snip wrappers, never false-positives on deliberate --replace idioms.",
       "category": "safety",
-      "tags": ["ripgrep", "rg", "hook", "guard", "safety"]
+      "tags": [
+        "ripgrep",
+        "rg",
+        "hook",
+        "guard",
+        "safety"
+      ]
     },
     {
       "name": "obsidian-gymnast",
@@ -30,7 +55,27 @@
       "displayName": "Obsidian Gymnast",
       "description": "Skills that let agents drive the Obsidian CLI: the command map (search, frontmatter-as-JSON, appends) plus the silent traps — single-dash flags parsed as CLI commands, restart reusing stale argv, multi-word searches returning empty with exit 0 — with rg/fd fallbacks when the app isn't running.",
       "category": "productivity",
-      "tags": ["obsidian", "cli", "notes", "web-clipper", "frontmatter"]
+      "tags": [
+        "obsidian",
+        "cli",
+        "notes",
+        "web-clipper",
+        "frontmatter"
+      ]
+    },
+    {
+      "name": "kittens-saved",
+      "source": "./plugins/kittens-saved",
+      "displayName": "Kittens Saved",
+      "description": "Counts the kittens the agent saves by doing the work instead of punting it, and gates its escape hatch: it may only stop cleanly when nothing of its own is left unsaved. Stop-hook reminder, JSONL ledger, statusline segment.",
+      "category": "workflow",
+      "tags": [
+        "accountability",
+        "stop-hook",
+        "statusline",
+        "escape-hatch",
+        "kittens"
+      ]
     }
   ]
 }

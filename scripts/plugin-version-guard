@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# plugin-version-guard — refuse a push range that edits plugins/<name>/ without
+# bumping plugins/<name>/.claude-plugin/plugin.json "version" (G3).
+#
+# Intended as a git pre-push helper. Reads the standard pre-push stdin lines:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# When stdin is a terminal, treats the range as origin/main..HEAD (dev check).
+#
+# Exit codes:
+#   0    ok (silent)
+#   1    one or more plugins edited without a version bump
+#   2    bad arguments
+#   127  missing git or jq
+set -eu
+
+usage() {
+	cat <<'EOF'
+plugin-version-guard — refuse plugin edits that omit a version bump.
+
+Usage:
+  plugin-version-guard [--repo <path>] [-h|--help]
+  # pre-push: pipe the standard "<local_ref> <lsha> <remote_ref> <rsha>" lines on stdin
+
+Exit codes:
+  0    clean
+  1    plugin path(s) changed without a version bump
+  2    bad arguments
+  127  missing git or jq
+
+Bypass for deliberate exceptions: git push --no-verify
+EOF
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+if ! have git; then
+	printf '[FAIL] dependency — git is not on PATH\n    → install git and retry\n'
+	exit 127
+fi
+if ! have jq; then
+	printf '[FAIL] dependency — jq is not on PATH\n    → install jq and retry\n'
+	exit 127
+fi
+
+repo=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-h|--help) usage; exit 0 ;;
+		--repo)
+			[ $# -ge 2 ] || { printf 'plugin-version-guard: --repo requires a path\n'; usage; exit 2; }
+			repo=$2
+			shift 2
+			;;
+		*)
+			printf 'plugin-version-guard: unknown argument: %s\n' "$1"
+			usage
+			exit 2
+			;;
+	esac
+done
+
+if [ -z "$repo" ]; then
+	repo=${CLAUDE_PROJECT_DIR:-$(pwd)}
+fi
+if [ ! -d "$repo" ]; then
+	printf '[FAIL] repo — not a directory: %s\n    → pass --repo <worktree>\n' "$repo"
+	exit 2
+fi
+repo=$(CDPATH= cd -- "$repo" && pwd)
+
+z40=0000000000000000000000000000000000000000
+failed=0
+
+version_at() {
+	# $1=sha $2=plugin-name → prints version or empty if blob missing
+	local sha=$1 name=$2 path="plugins/$name/.claude-plugin/plugin.json"
+	if git -C "$repo" cat-file -e "$sha:$path" 2>/dev/null; then
+		git -C "$repo" show "$sha:$path" | jq -r '.version // empty'
+	fi
+}
+
+check_range() {
+	# $1=base_sha (may be z40) $2=tip_sha
+	local base=$1 tip=$2 files names name old new
+	if [ "$tip" = "$z40" ]; then
+		return 0
+	fi
+	if [ "$base" = "$z40" ]; then
+		files=$(git -C "$repo" diff-tree -r --name-only --no-commit-id "$tip")
+	else
+		files=$(git -C "$repo" diff --name-only "$base" "$tip")
+	fi
+	names=$(printf '%s\n' "$files" \
+		| sed -n 's|^plugins/\([^/]*\)/.*|\1|p' \
+		| sort -u)
+	[ -n "$names" ] || return 0
+
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		if ! git -C "$repo" cat-file -e \
+			"$tip:plugins/$name/.claude-plugin/plugin.json" 2>/dev/null; then
+			continue
+		fi
+		if [ "$base" = "$z40" ]; then
+			old=""
+		else
+			old=$(version_at "$base" "$name")
+		fi
+		new=$(version_at "$tip" "$name")
+		if [ -z "$new" ]; then
+			printf '[FAIL] version-bump — plugins/%s/ changed but plugin.json has no version\n    → set version in plugins/%s/.claude-plugin/plugin.json (subdir plugins cannot omit it; see CLAUDE.md)\n    → bypass: git push --no-verify\n' \
+				"$name" "$name"
+			failed=1
+		elif [ "$old" = "$new" ]; then
+			printf '[FAIL] version-bump — plugins/%s/ changed but version stayed %s\n    → bump version in plugins/%s/.claude-plugin/plugin.json\n    → bypass: git push --no-verify\n' \
+				"$name" "$new" "$name"
+			failed=1
+		fi
+	done <<EOF
+$names
+EOF
+}
+
+check_unpushed() {
+	if git -C "$repo" rev-parse --verify origin/main >/dev/null 2>&1; then
+		check_range "$(git -C "$repo" rev-parse origin/main)" "$(git -C "$repo" rev-parse HEAD)"
+	else
+		check_range "$z40" "$(git -C "$repo" rev-parse HEAD)"
+	fi
+}
+
+saw_range=0
+if [ -t 0 ]; then
+	check_unpushed
+	saw_range=1
+else
+	while read -r _local_ref local_sha _remote_ref remote_sha; do
+		[ -n "${local_sha:-}" ] || continue
+		saw_range=1
+		check_range "$remote_sha" "$local_sha"
+	done
+	# Non-tty empty stdin (CI/agent shells): same as a manual check against origin.
+	if [ "$saw_range" -eq 0 ]; then
+		check_unpushed
+	fi
+fi
+
+exit "$failed"

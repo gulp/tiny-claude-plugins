@@ -18,10 +18,18 @@ plugins/<name>/
 ```
 
 `agent-mail-monitor` has grown past a bare monitor: it ships a read-only `agent-mail`
-Deno CLI (`watch`/`product`/`monitor`/`doctor`/`capabilities`/`schema`), five skills,
-and a read-only `mail-triage` subagent. The CLI owns its own exit-code contract —
+Deno CLI (`watch`/`product`/`monitor`/`doctor`/`message`/`shadow`/`capabilities`/
+`schema`), six skills, and a read-only `mail-triage` subagent. Project and
+all-project watches use the canonical git-mailbox; product mode uses the
+non-consuming product-bus query. The CLI owns its own exit-code contract —
 read it from the source of truth rather than freezing it here: `deno task -q doctor`
 paths, or `… capabilities` / `… schema <command>` for the machine-readable envelope.
+
+The same plugin directory is also a Codex plugin: `.codex-plugin/plugin.json`,
+`scripts/codex-monitor.ts`, and `skills/agent-mail-monitor/` provide the
+App Server tracer and human control surface. `deno task test:codex` exercises
+the stdio JSON-RPC boundary, including elicitation cancellation, exact-thread
+resume, timeout/process failure, and unknown-request failure.
 
 ## Conventions
 
@@ -31,8 +39,26 @@ paths, or `… capabilities` / `… schema <command>` for the machine-readable e
   `plugin.json` wins and can mask a bump made only in the marketplace entry.
 - **Bump `version` on every release** you want users to receive. Claude Code
   treats an unchanged `version` as "already up to date" and won't pull new
-  commits. Omit `version` entirely and the git SHA is used instead (always fresh,
-  but no human-readable release line).
+  commits. **Do not omit `version` in this repo.** The commit-SHA cache fallback
+  only applies when the marketplace entry's `source` is `"./"` (the marketplace
+  root *is* the plugin). This marketplace uses the subdir shape
+  (`"source": "./plugins/<name>"`); omitting `version` there lands the install
+  under a single cache dir named `unknown`, which never invalidates — every
+  future commit silently reuses the same stale files. Measured 2026-07-27 across
+  28 installed plugins (`~/.claude/plugins/cache/<mkt>/<plugin>/<version-dir>/`):
+
+  | marketplace `source` | `version` in plugin.json | cache dir |
+  |---|---|---|
+  | `"./"` (root IS the plugin) | absent | 12-hex commit SHA |
+  | `"./plugins/<name>"` (subdir) | absent | **`unknown`** (permanent) |
+  | either | present | the semver string |
+
+  Evidence: SHA rows include `agent-browser/…/d9387aae58fb` and
+  `caveman/…/600e8efcd6ac`; `unknown` rows are the five
+  `claude-plugins-official/{frontend-design,playground,plugin-dev,pr-review-toolkit,skill-creator}`
+  subdir plugins with no version; semver rows include
+  `tiny-claude-plugins/agent-mail-monitor/{0.1.0…0.5.0}`. Dropping `version`
+  here would make staleness worse, not better.
 - **Monitors are experimental.** `monitors/monitors.json` at the plugin root is
   the convention; `claude plugin validate` warns on bare top-level monitor decls
   and future versions want them under `experimental.*`. They run **unsandboxed**
@@ -57,7 +83,24 @@ paths, or `… capabilities` / `… schema <command>` for the machine-readable e
 
 ```
 claude plugin validate .
+scripts/plugin-drift tiny-claude-plugins
 ```
+
+`plugin-drift` compares worktree / `origin/main` / the
+`~/.claude/plugins/marketplaces/<mkt>` clone / cache versions and fails loud on
+staleness (G2 unpushed, marketplace fetch lag, G1 missing cache dir). SessionStart
+runs it automatically via `.claude/settings.json`. Enable the matching pre-push
+guards once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+`.githooks/pre-push` runs (1) `plugin-drift --skip-g2` so an in-flight push is
+not blocked by the unpushed-commits check it is about to clear, then
+(2) `plugin-version-guard`, which refuses any push that touches `plugins/<name>/`
+without bumping that plugin's `plugin.json` version (G3). Deliberate escape hatch:
+`git push --no-verify`.
 
 Run a plugin's script tests (a plugin may ship a `tests/` dir of self-contained
 bash tests — they stub externals like `am` on `PATH` and use real `jq`; they SKIP

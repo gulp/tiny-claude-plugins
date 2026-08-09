@@ -1,7 +1,9 @@
-# Fix: install the monitor's prerequisites (`am`, `jq`, `curl`)
+# Fix: install the Agent Mail surface's prerequisites
 
-The monitor polls `am check-inbox --json`, parses it with `jq`, and the doctor
-probes the server with `curl`. All three must be on `PATH`.
+The Deno monitor tails the canonical git-mailbox directly in project/all scope
+and uses `am products inbox` in product scope. It never calls the consuming
+`am check-inbox` path. The doctor and bundled shell diagnostics use `am`, `jq`,
+and `curl`, so all three must be on `PATH` for the complete plugin surface.
 
 ## `am` — the Agent Mail CLI
 

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# pre-push: plugin freshness guards for this marketplace.
+#
+# 1) plugin-drift --skip-g2 — marketplace clone / cache must match origin
+#    (G2 unpushed is skipped: this hook runs before the push updates origin).
+# 2) plugin-version-guard — refuse plugins/<name>/ edits with no version bump (G3).
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+"$root/scripts/plugin-drift" tiny-claude-plugins --repo "$root" --skip-g2
+
+# Forward the pre-push stdin ranges to the version guard.
+"$root/scripts/plugin-version-guard" --repo "$root"
