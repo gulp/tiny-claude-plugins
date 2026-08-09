@@ -39,7 +39,10 @@ resume, timeout/process failure, and unknown-request failure.
   `plugin.json` wins and can mask a bump made only in the marketplace entry.
 - **Bump `version` on every release** you want users to receive. Claude Code
   treats an unchanged `version` as "already up to date" and won't pull new
-  commits. **Do not omit `version` in this repo.** The commit-SHA cache fallback
+  commits. Not theoretical: `scripts/plugin-version-guard`'s **first live run**
+  (2026-08-09) caught a docs-only rg-flag-guard commit that had no bump —
+  installs would never have received the file. **Do not omit `version` in this
+  repo.** The commit-SHA cache fallback
   only applies when the marketplace entry's `source` is `"./"` (the marketplace
   root *is* the plugin). This marketplace uses the subdir shape
   (`"source": "./plugins/<name>"`); omitting `version` there lands the install
