@@ -1,7 +1,7 @@
 {
   "name": "kittens-saved",
-  "version": "0.1.0",
-  "description": "Counts the kittens you save by doing the work instead of punting it, and gates the agent's escape hatch: you may only stop cleanly when nothing of yours is left unsaved. A Stop-hook reminder, a JSONL ledger, and a statusline segment.",
+  "version": "0.3.0",
+  "description": "Counts the kittens you save by doing the work instead of punting it, and gates the agent's escape hatch: you may only stop cleanly when nothing of yours is left unsaved. An EVIDENCE-GATED Stop-hook nudge that fires only when THIS turn's message trips a lazy-handoff denylist (bounded-wait so it reads the current turn, not the previous), a human-gated pass-style `blame` grammar (ls/add/rm/edit/test; add is preview-only without --yes) to grow the denylist, a startup primer with the Zen of Kittens, a JSONL ledger, ops commands (status/stats/doctor/config), and a statusline segment.",
   "author": {
     "name": "Yekta Gurel",
     "email": "me@yektagurel.com"
