@@ -1,0 +1,30 @@
+{
+  "name": "kittens-saved",
+  "version": "0.1.0",
+  "description": "Counts the kittens you save by doing the work instead of punting it, and gates the agent's escape hatch: you may only stop cleanly when nothing of yours is left unsaved. A Stop-hook reminder, a JSONL ledger, and a statusline segment.",
+  "author": {
+    "name": "Yekta Gurel",
+    "email": "me@yektagurel.com"
+  },
+  "keywords": ["accountability", "stop-hook", "statusline", "kittens", "escape-hatch"],
+  "userConfig": {
+    "scope": {
+      "type": "string",
+      "title": "Tally scope",
+      "description": "Whether the statusline and the default `/kittens-saved:count` show kittens saved in this session only, or across all sessions. One of: session, all.",
+      "default": "session"
+    },
+    "enabled": {
+      "type": "string",
+      "title": "Enabled",
+      "description": "Set to false to silence the Stop-hook reminder and the statusline segment everywhere. Per-session control is /kittens-saved:toggle off.",
+      "default": "true"
+    },
+    "debug": {
+      "type": "string",
+      "title": "Debug",
+      "description": "When true, the hooks echo the content they inject to stderr, prefixed [kittens-saved-debug], so you can see the reminder in the transcript / claude --debug without decoding the hook JSON.",
+      "default": "false"
+    }
+  }
+}

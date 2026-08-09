@@ -1,0 +1,29 @@
+{
+  "description": "Stop-hook reminder + escape-hatch gate for kittens-saved; SessionStart arms the ledger.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py\" hook-session-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py\" hook-stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
