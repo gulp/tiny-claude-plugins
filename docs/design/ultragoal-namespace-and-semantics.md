@@ -129,6 +129,13 @@ The operator answered **find done**.
 
 ## The sibling: ultraralph
 
+> **2026-08-09, same session, later:** the ultraralph↔ralph-this overlap is
+> resolved in `ultraralph-ultraloop-destiny.md` — the engine is named
+> **ultraloop**, ultraralph is a thin plugin over it (adopt-if-present bed,
+> self-contained escalation mode), and the Karpathy improvement verb moves
+> into ultragoal as `start --iterate N`. The mechanism below stands; read
+> the destiny note before building.
+
 Ruled: **no `:ralph` rung inside ultragoal.** Escalation crosses a plugin
 boundary to a sibling (aligns with the existing ultraralph-first v0.3
 bundle work):
@@ -184,6 +191,11 @@ judge you can't trust).
 - Marketplace entry `goal-automata` → `ultragoal`; **bump `version`** (the
   subdir-source cache trap is documented in CLAUDE.md and enforced by
   `scripts/plugin-version-guard`).
+- **Remove the `ultraralph` verb from the renamed skill and relocate
+  `references/ultraralph-prompt.md` in the same change** — it becomes
+  `/ultragoal start --iterate N` (ruled 2026-08-09, destiny note Ruling 4).
+  Shipping the rename without this ships the ultraralph name collision
+  (improve-after-success vs escalate-after-failure) into the marketplace.
 - Check for a shadowing personal skill under `~/.claude/skills/` before
   publish (a stale `goal-automata` copy shadowed the plugin once already,
   2026-08-09).
