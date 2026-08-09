@@ -28,7 +28,7 @@ terminal as you type, no namespace explosion.
   march               upgrade a set goal into enforcement → marching
   status              where am I
   bypass              human key around the gate           → bypassed
-  clear               un-set a free goal                  → no goal
+  clear               un-set a set goal                   → no goal
 /ultragoal:automata   the mode skill — a different arming ceremony
                       (plan → hash-pinned rubric, bounded judge)
 /ultragoal:btw        non-blocking check-in — reports status, offers
@@ -62,9 +62,9 @@ Everything else is a verb.
 |---|---|---|
 | `start` | gh-style ignition | arm `:automata` with a plan file. Deliberately **not** `ready` — beads' `br ready` is queue semantics ("unblocked, waiting for a worker"); if ultragoal ever grows a queue of pending rubrics, *that* is where `ready` vocabulary belongs. |
 | `status` | CC-native (`/status`) | read-only, always safe |
-| `march` | the plugin's own idiom | upgrade the free goal into enforcement. Compiles the goal sentence into a rubric, **shows the compile, binds only on confirm** (weaker provenance than a plan file — the rubric derives from a possibly-drifted conversation, so it must show its work). Spend starts here. There is no `demote`; the only way down is `bypass`. gh analogy for the docs: `march` is `gh pr ready` — same object, upgraded state. |
+| `march` | the plugin's own idiom | upgrade a set goal into enforcement. Compiles the goal sentence into a rubric, **shows the compile, binds only on confirm** (weaker provenance than a plan file — the rubric derives from a possibly-drifted conversation, so it must show its work). Spend starts here. There is no `demote`; the only way down is `bypass`. gh analogy for the docs: `march` is `gh pr ready` — same object, upgraded state. |
 | `bypass` | CC-native (*bypass permissions*) | the human key: you deliberately go **around** the gate, on your own authority. The audit trail reads "bypassed", which is the truth. (Replaced `release`, which wrongly implied the gate let go.) |
-| `clear` | CC-native (`/clear`) | wipe a **free** goal, no ceremony. `clear` and `bypass` are never both valid: one word per enforcement level — `clear` works only on the free rung, `bypass` only on marching. |
+| `clear` | CC-native (`/clear`) | wipe a **set** goal, no ceremony. `clear` and `bypass` are never both valid: one word per state — `clear` works only on a set goal, `bypass` only while marching. |
 
 Cross-plugin convention (stated once, reused by the suite): **you arm
 enforcers and observers; work is never "armed."** dumbzone arms a watcher,
@@ -169,14 +169,15 @@ lean: ultragoal writes state files; fleetglass's watcher reads them (its
 C1: read stores, instrument nothing). First non-numbers kind — needs one
 deliberate paragraph in the fleetglass plan before it exists.
 
-## Open
+## The goal-set exit nudge (ruled 2026-08-09: "set to go")
 
-**#38 — the free rung's exit nudge.** When a bare goal is set and the
-session tries to stop: (a) pure mirror ("you said X — done?") and always
-let go, or (b) the mirror **plus an inline `march` offer** — the free rung
-as the ladder's on-ramp. Recommendation on record: (b). Self-grading was
-rejected outright (the operator's own ablation work shows models grading
-their own output is the judge you can't trust).
+When a session with a **goal set** (not marching) tries to stop, the nudge
+mirrors the goal back **and offers `march` inline**: "you said X — done?
+(`march` to enforce · `clear` to drop)". The stop is always allowed — a set
+goal never gates — but the bare tier is the ladder's on-ramp, teaching that
+enforcement is one word away. Self-grading was rejected outright (the
+operator's own ablation work shows models grading their own output is the
+judge you can't trust).
 
 ## Migration checklist (when the rename executes)
 
