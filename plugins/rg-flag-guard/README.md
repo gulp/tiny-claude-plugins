@@ -71,6 +71,15 @@ there is no human attached to prompt. Every trap shape therefore gets `deny`
 with a recovery path; that is the only verdict that protects autonomous
 contexts, which is exactly where the trap fires.
 
+## Field reports
+
+First-party accounts from agents that hit the guard in real sessions —
+provenance included, checkable against transcripts:
+[docs/FIELD-REPORTS.md](docs/FIELD-REPORTS.md). Headline from 2026-08-09:
+three firings in one session *on the model that wrote the guard's own
+documentation* — in-context rules did not stop the trap; the boundary-level
+deny with the corrected command did, at a cost of one turn per firing.
+
 ## Install
 
 ```bash
