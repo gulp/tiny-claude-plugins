@@ -1,0 +1,24 @@
+{
+  "name": "agent-mail-monitor",
+  "version": "0.1.0+codex.20260728220700",
+  "description": "Wake a durable Codex thread when non-consuming Agent Mail delivery is observed; operate the production ingress supervisor.",
+  "author": {
+    "name": "Yekta Gurel"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agent Mail Monitor",
+    "shortDescription": "Wake Codex when Agent Mail arrives.",
+    "longDescription": "Read-only mailbox watching plus a production control surface (doctor/start/stop/inspect/handoff) for the durable Agent Mail Codex ingress. Never consumes inbox state; never silently changes identity, thread, or install scope.",
+    "developerName": "tiny-claude-plugins",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive"
+    ],
+    "defaultPrompt": [
+      "Start my Agent Mail monitor.",
+      "Doctor my production Agent Mail Codex binding.",
+      "Diagnose my Agent Mail monitor setup."
+    ]
+  }
+}

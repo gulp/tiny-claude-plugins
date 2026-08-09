@@ -142,7 +142,7 @@ Deno.test("K3 production owner proves exact binding and delivers/queues safely",
     { schemaVersion: 1, text: "urgent", byteLength: 6 },
     "batch:urgent#stable",
   );
-  assertEquals(server.methods, ["thread/resume", "turn/start", "turn/steer"]);
+  assertEquals(server.methods, ["initialize", "thread/resume", "turn/start", "turn/steer"]);
   await owner.close();
   await server.close();
 });
@@ -169,7 +169,7 @@ Deno.test("K3 restart resumes exact durable thread and mismatch is fatal", async
     assert(error.message.includes("expected thread-k3"));
   }
   assert(failed, "mismatched exact resume must fail");
-  assertEquals(server.methods, ["thread/resume"]);
+  assertEquals(server.methods, ["initialize", "thread/resume"]);
   await owner.close();
   await server.close();
 });

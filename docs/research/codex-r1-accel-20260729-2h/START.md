@@ -1,0 +1,16 @@
+# R1-accelerated 2h shadow soak — start
+- label: **R1-accelerated** (does not waive later 24h soak; no R2)
+- authorization: AzureFalcon #28270
+- binding: r1-accel-20260729-2h
+- agent: OliveCedar
+- project: /home/gulp/projects/tiny-claude-plugins
+- mailbox: /home/gulp/.mcp_agent_mail_git_mailbox_repo
+- started_at_utc: 2026-07-29T00:51:57Z
+- planned_end_utc: 2026-07-29T02:51:57Z
+- outer_timeout: 7200s
+- delivery: off (`CODEX_INGRESS_ENABLED` unset/false)
+- mode: `run --shadow`
+- unit: none (foreground timeout only; no systemd)
+- evidence: /tmp/amc-r1-accel-20260729-2h/evidence/
+- final_artifact: /tmp/amc-r1-accel-20260729-2h/shadow/r1-accel-20260729-2h.json
+- hourly_dir: /tmp/amc-r1-accel-20260729-2h/evidence/hourly/

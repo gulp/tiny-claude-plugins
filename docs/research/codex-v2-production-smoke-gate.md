@@ -1,9 +1,11 @@
 # tcp-efp.6.10 — installed-Codex one-message production smoke
 
-**Bead:** `tcp-efp.6.10` (prep only — **do not close** until `5.12` lands)  
-**Blocks:** `tcp-efp.6.4` (R1)  
-**Prepared by:** OliveCedar (AzureFalcon #28209)  
-**Host probe (prep time):** `codex-cli 0.145.0` on PATH (`~/.local/bin/codex`)
+**Bead:** `tcp-efp.6.10` — **CLOSED 2026-07-29** (drift-only pass). Evidence:
+`docs/research/codex-v2-smoke-20260729-b2/`.
+**Unblocks:** `tcp-efp.6.4` (R1) for wall-clock gate.
+**Prior non-pass:** `docs/research/codex-v2-smoke-20260729-a1/` (two batches + failed turns);
+`/tmp/amc-smoke-20260729-b1/` (contact-request collateral in one batch).
+**Host:** native ELF `codex-cli 0.145.0` via `CODEX_BIN`; model `gpt-5.6-sol`.
 
 ## Goal
 
@@ -11,9 +13,15 @@ Cross the **real installed Codex** boundary once: disposable binding, private Ap
 Server, one post-baseline fixture message → exactly one accepted stable batch on
 the configured durable thread → clean stop. No lingering unit.
 
+Acceptance means **authoritative `turn/completed`**, not mere `turn/start` RPC
+success (`tcp-efp.4.12`). A `turn/failed` must leave the batch retryable or
+dead-lettered without advancing the durable cursor.
+
 ## Hard constraints
 
 - Disposable identity / state / thread only.
+- **Isolated inbox + baseline:** no collateral contact-request or peer mail after baseline; exactly one post-baseline fixture event.
+- Supported model/account path (no ChatGPT-account / unsupported-model turn failures).
 - Bounded timeout and model spend (recommend ≤ 1 turn, ≤ 3 min wall, abort hard).
 - No fallback, replacement thread, competing owner, body logging, or cursor loss.
 - **Do not** leave `agent-mail-codex@*.service` enabled/lingering after the run.
@@ -21,13 +29,15 @@ the configured durable thread → clean stop. No lingering unit.
 
 ## Prerequisites (must be true before execute)
 
-| Gate | Status at prep |
+| Gate | Status |
 |---|---|
-| `tcp-efp.5.11` live doctor/status | **Closed** — usable for before/after |
-| `tcp-efp.5.12` live ownership handoff | **In progress** — Unix-socket CLI landed; production daemon host still blocks execute |
+| `tcp-efp.4.12` terminal turn outcome | **Closed** — accept+cursor only on `turn/completed` |
+| `tcp-efp.5.11` live doctor/status | **Closed** |
+| `tcp-efp.5.12` live ownership handoff | **Closed** |
 | `tcp-efp.5.13` least-privilege unit/env | **Closed** |
-| `tcp-efp.5.14` deep live probes | **Closed** — Codex drift/config/mailbox checks landed |
-| Codex pin vs host | **Contradiction** — acceptance baseline `0.144.6`; host has `0.145.0` (C10 treats newer as drift-only). Resolve before treating smoke as promotion evidence. |
+| `tcp-efp.5.14` deep live probes | **Closed** |
+| `tcp-efp.5.15` native CODEX_BIN | **Closed** |
+| Codex pin vs host | **Drift-only** — baseline `0.144.6`; host `0.145.0` — not promotion evidence |
 
 ## Versions to record (fill at execute)
 

@@ -1,0 +1,1 @@
+ 939767       00:26 timeout 7200s deno run -A src/cli.ts run --config /tmp/amc-r1-accel-20260729-2h-b/config.json --binding r1-accel-20260729-2h-b --shadow

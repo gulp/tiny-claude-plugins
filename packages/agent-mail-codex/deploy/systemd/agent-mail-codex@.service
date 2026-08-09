@@ -1,0 +1,64 @@
+# agent-mail-codex@.service — systemd user unit template (O3 / tcp-efp.5.6)
+#
+# Instance name = binding id from the ingress config.
+# Example: systemctl --user enable --now agent-mail-codex@example-project.service
+#
+# Hardening: mailbox read + state write only. No project tree write.
+# Durability lives in this unit (and its SQLite state), not in App Server.
+
+[Unit]
+Description=Agent Mail Codex ingress (%i)
+Documentation=file:%h/.config/agent-mail-codex/ops-runbook.md
+After=default.target
+# Do not order after any App Server daemon — kernel must survive without it.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Environment file supplies absolute paths. Install script writes one per binding.
+EnvironmentFile=-%h/.config/agent-mail-codex/%i.env
+Environment=AGENT_MAIL_CODEX_BINDING=%i
+
+# Long-lived supervisor. Wrapper resolves deno + package root.
+ExecStart=%h/.local/lib/agent-mail-codex/deploy/agent-mail-codex-run.sh --config ${AGENT_MAIL_CODEX_CONFIG} --binding %i
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Bounded crash restart (pairs with StartLimit* above).
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Runtime / state directories (inspectable; survive reboot under XDG).
+StateDirectory=agent-mail-codex/%i
+RuntimeDirectory=agent-mail-codex/%i
+RuntimeDirectoryMode=0700
+StateDirectoryMode=0700
+# Logs: journalctl --user -u agent-mail-codex@%i.service
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agent-mail-codex-%i
+
+# Least privilege relative to a coding agent: read mailbox + write state only.
+# ProtectHome=read-only still allows XDG state under ~/.local/state via BindPaths.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# Writable: declared StateDirectory/RuntimeDirectory + explicit config/mailbox binds.
+ReadWritePaths=%h/.local/state/agent-mail-codex
+ReadOnlyPaths=%h/.mcp_agent_mail_git_mailbox_repo
+# Config is read-only for the process.
+ReadOnlyPaths=%h/.config/agent-mail-codex
+
+# Health: operator uses doctor/status against the same config (see runbook).
+# ExecStartPost is intentionally absent — probes must stay read-only and
+# must not race lease acquisition.
+
+[Install]
+WantedBy=default.target

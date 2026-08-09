@@ -1,0 +1,18 @@
+# 6.10 smoke summary
+- ok: yes (drift-only)
+- codex: 0.145.0 native ELF (`…/codex-linux-x64/vendor/…/bin/codex`); PATH npx wrapper rejected by 5.15
+- baseline_disposition: drift-only (acceptance pin 0.144.6)
+- binding / agent / thread / project: `smoke-20260729-a1` / AmberHarbor / `019fab31-bde7-7c21-85c7-19be43f64602` / `/home/gulp/projects/tiny-claude-plugins`
+- fixture message_id: 28248 (plus collateral contact-request 28247)
+- accepted batch_id / turn_id:
+  - `batch:smoke-20260729-a1:28248-28248` / `019fab35-cc36-7062-8abb-28846aa52b42`
+  - collateral: `batch:smoke-20260729-a1:28247-28247` / `019fab35-c45a-7fa0-985a-8256ec83ca35`
+- cursor before → after: 0 → 28248
+- status healthy before/running/after: unhealthy(VERSION_DRIFT+absent store) / unhealthy(VERSION_DRIFT only; owner headless) / unhealthy(VERSION_DRIFT+LEASE_MISSING expected post-stop)
+- fallback_used: no
+- competing_owner: no
+- lingering_unit: no (foreground `timeout` + SIGTERM; no systemd enable)
+- notes:
+  - Live smoke initially hung until App Server `initialize` was added before `thread/resume`.
+  - Model turns returned ChatGPT-account model errors after `turn/start`; ingress still recorded accepted turn IDs and advanced the durable cursor.
+  - Not promotion evidence for 0.144.6 pin.

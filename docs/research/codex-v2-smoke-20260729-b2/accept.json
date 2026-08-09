@@ -1,0 +1,13 @@
+{
+  "batch_id": "batch:smoke-20260729-b2:28263-28263",
+  "turn_id": "019fab4b-82c3-7863-ab1f-59f0ff17641e",
+  "thread_id": "019fab48-d629-7111-8f81-a44af9eafd05",
+  "event_ids": [
+    28263
+  ],
+  "fixture_message_id": 28263,
+  "baseline_cursor": 28262,
+  "cursor_after": 28263,
+  "accepted_batch_count": 1,
+  "model": "gpt-5.6-sol"
+}

@@ -1,0 +1,18 @@
+Binding: smoke-20260729-a1
+Agent: AmberHarbor
+Project: home-gulp-projects-tiny-claude-plugins
+Thread: 019fab30-1891-7cb0-a39b-48ae2b3954b9
+Owner: unknown
+Cursor: <unknown>
+Queue: <unknown>
+Health: UNHEALTHY
+  config: healthy [CONFIG_OK] binding=smoke-20260729-a1 adapter=headless-app-server-owner (no runtime snapshot yet)
+  mailbox: healthy [MAILBOX_OK] canonical inbox readable layout ok inbox=/home/gulp/.mcp_agent_mail_git_mailbox_repo/projects/home-gulp-projects-tiny-claude-plugins/agents/AmberHarbor/inbox scanned<=64
+  store: unhealthy [STORE_UNREADABLE] No such file or directory (os error 2): stat '/tmp/amc-smoke-20260729-a1/state.sqlite3'
+  lease: unknown [LEASE_STATE_UNKNOWN] store unavailable
+  owner: unknown [OWNER_STATE_UNKNOWN] no fresh authoritative owner
+  thread: healthy [THREAD_OK] thread=019fab30-1891-7cb0-a39b-48ae2b3954b9
+  cursor: unknown [CURSOR_STATE_UNKNOWN] cursor unavailable
+  queue: unknown [QUEUE_STATE_UNKNOWN] queue unavailable
+  version: unhealthy [VERSION_DRIFT] codex=0.145.0 baseline=0.144.6 disposition=drift_probe; newer than acceptance baseline 0.144.6; evidence is drift-only; statusSchema=1 component=0.1.0-phase0 store=<unreadable>
+Delivery flag: disabled (safe default)

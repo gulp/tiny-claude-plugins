@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "healthy": false,
+  "bindingId": "smoke-20260729-a1",
+  "agent": "AmberHarbor",
+  "projectSlug": "home-gulp-projects-tiny-claude-plugins",
+  "threadId": "019fab30-1891-7cb0-a39b-48ae2b3954b9",
+  "owner": "unknown",
+  "cursor": null,
+  "queueDepth": null,
+  "checks": [
+    {
+      "name": "config",
+      "state": "healthy",
+      "code": "CONFIG_OK",
+      "detail": "binding=smoke-20260729-a1 adapter=headless-app-server-owner (no runtime snapshot yet)"
+    },
+    {
+      "name": "mailbox",
+      "state": "healthy",
+      "code": "MAILBOX_OK",
+      "detail": "canonical inbox readable layout ok inbox=/home/gulp/.mcp_agent_mail_git_mailbox_repo/projects/home-gulp-projects-tiny-claude-plugins/agents/AmberHarbor/inbox scanned<=64"
+    },
+    {
+      "name": "store",
+      "state": "unhealthy",
+      "code": "STORE_UNREADABLE",
+      "detail": "No such file or directory (os error 2): stat '/tmp/amc-smoke-20260729-a1/state.sqlite3'"
+    },
+    {
+      "name": "lease",
+      "state": "unknown",
+      "code": "LEASE_STATE_UNKNOWN",
+      "detail": "store unavailable"
+    },
+    {
+      "name": "owner",
+      "state": "unknown",
+      "code": "OWNER_STATE_UNKNOWN",
+      "detail": "no fresh authoritative owner"
+    },
+    {
+      "name": "thread",
+      "state": "healthy",
+      "code": "THREAD_OK",
+      "detail": "thread=019fab30-1891-7cb0-a39b-48ae2b3954b9"
+    },
+    {
+      "name": "cursor",
+      "state": "unknown",
+      "code": "CURSOR_STATE_UNKNOWN",
+      "detail": "cursor unavailable"
+    },
+    {
+      "name": "queue",
+      "state": "unknown",
+      "code": "QUEUE_STATE_UNKNOWN",
+      "detail": "queue unavailable"
+    },
+    {
+      "name": "version",
+      "state": "unhealthy",
+      "code": "VERSION_DRIFT",
+      "detail": "codex=0.145.0 baseline=0.144.6 disposition=drift_probe; newer than acceptance baseline 0.144.6; evidence is drift-only; statusSchema=1 component=0.1.0-phase0 store=<unreadable>"
+    }
+  ],
+  "lastError": null,
+  "observedAt": "2026-07-29T00:05:07.852Z"
+}

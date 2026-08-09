@@ -1,0 +1,18 @@
+# 6.10 smoke summary
+- ok: yes (drift-only)
+- codex: 0.145.0 native ELF; PATH npx wrapper rejected
+- baseline_disposition: drift-only (acceptance pin 0.144.6)
+- binding / agent / thread / project: `smoke-20260729-b2` / MagentaGoose / `019fab48-d629-7111-8f81-a44af9eafd05` / `/home/gulp/projects/tiny-claude-plugins`
+- model: gpt-5.6-sol (ChatGPT-account supported; seed turn completed before smoke)
+- fixture message_id: **28263** (exactly one post-baseline event; baseline was 28262)
+- accepted batch_id / turn_id: `batch:smoke-20260729-b2:28263-28263` / `019fab4b-82c3-7863-ab1f-59f0ff17641e`
+- cursor before → after: 28262 → 28263
+- accepted batches: **1**
+- 4.12: acceptance only after terminal turn outcome (prior b1 also showed completed turn; failed turns would not advance)
+- fallback_used: no
+- competing_owner: no
+- lingering_unit: no (foreground timeout + SIGTERM)
+- finished_at_utc: 2026-07-29T00:35:01Z
+- notes:
+  - b1 discarded: auto_contact_if_blocked created collateral #28261
+  - b2: contact pre-approved; fixture without auto_contact; batchWindowMs=1 maxEvents=1

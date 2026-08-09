@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Mail Codex"
+  short_description: "Start, stop, doctor, and hand off production Agent Mail ingress"
+  default_prompt: "Use $agent-mail-codex to doctor and start my production Agent Mail Codex binding."

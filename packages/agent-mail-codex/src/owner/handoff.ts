@@ -49,6 +49,22 @@ export class ExclusiveHandoff {
     this.#threadId = threadId;
   }
 
+  /** Rebuild from durable operator state (O5). Does not imply a live App Server session. */
+  static restore(input: {
+    threadId: string;
+    owner: HandoffOwner;
+    activeTurnId?: string | null;
+    unresolvedRequestIds?: string[];
+    pending?: PendingDelivery[];
+  }): ExclusiveHandoff {
+    const handoff = new ExclusiveHandoff(input.threadId);
+    handoff.#owner = input.owner;
+    handoff.#activeTurnId = input.activeTurnId ?? null;
+    handoff.#requests = new Set(input.unresolvedRequestIds ?? []);
+    handoff.#pending = [...(input.pending ?? [])];
+    return handoff;
+  }
+
   snapshot(): HandoffSnapshot {
     return {
       owner: this.#owner,

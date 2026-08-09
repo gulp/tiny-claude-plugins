@@ -1,0 +1,1 @@
+{"ok":true,"event":"shadow.started","bindingId":"r1-accel-20260729-2h-b","deliveryEnabled":false,"mailboxRoot":"/home/gulp/.mcp_agent_mail_git_mailbox_repo","reportPath":"/tmp/amc-r1-accel-20260729-2h-b/shadow/r1-accel-20260729-2h-b.json"}

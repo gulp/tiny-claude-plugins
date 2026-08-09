@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "healthy": false,
+  "bindingId": "smoke-20260729-a1",
+  "agent": "AmberHarbor",
+  "projectSlug": "home-gulp-projects-tiny-claude-plugins",
+  "threadId": "019fab31-bde7-7c21-85c7-19be43f64602",
+  "owner": "headless",
+  "cursor": 0,
+  "queueDepth": 0,
+  "checks": [
+    {
+      "name": "config",
+      "state": "healthy",
+      "code": "CONFIG_OK",
+      "detail": "binding=smoke-20260729-a1 agent=AmberHarbor adapter=headless-app-server-owner runtime consistent"
+    },
+    {
+      "name": "mailbox",
+      "state": "healthy",
+      "code": "MAILBOX_OK",
+      "detail": "canonical inbox readable layout ok inbox=/home/gulp/.mcp_agent_mail_git_mailbox_repo/projects/home-gulp-projects-tiny-claude-plugins/agents/AmberHarbor/inbox scanned<=64"
+    },
+    {
+      "name": "store",
+      "state": "healthy",
+      "code": "STORE_OK",
+      "detail": "schema=2"
+    },
+    {
+      "name": "lease",
+      "state": "healthy",
+      "code": "LEASE_OK",
+      "detail": "owner=agent-mail-codex-supervisor:217083 expires=2026-07-29T00:10:35.860Z"
+    },
+    {
+      "name": "owner",
+      "state": "healthy",
+      "code": "OWNER_OK",
+      "detail": "owner=headless"
+    },
+    {
+      "name": "thread",
+      "state": "healthy",
+      "code": "THREAD_OK",
+      "detail": "thread=019fab31-bde7-7c21-85c7-19be43f64602"
+    },
+    {
+      "name": "cursor",
+      "state": "healthy",
+      "code": "CURSOR_OK",
+      "detail": "lastMessageId=0"
+    },
+    {
+      "name": "queue",
+      "state": "healthy",
+      "code": "QUEUE_OK",
+      "detail": "pending=0"
+    },
+    {
+      "name": "version",
+      "state": "unhealthy",
+      "code": "VERSION_DRIFT",
+      "detail": "codex=0.145.0 baseline=0.144.6 disposition=drift_probe; newer than acceptance baseline 0.144.6; evidence is drift-only; statusSchema=1 component=0.1.0-phase0 store=2"
+    }
+  ],
+  "lastError": null,
+  "observedAt": "2026-07-29T00:10:16.865Z"
+}

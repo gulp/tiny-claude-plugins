@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "statePath": "/tmp/amc-smoke-20260729-a1/state.sqlite3",
+  "bindings": {
+    "smoke-20260729-a1": {
+      "agent": "AmberHarbor",
+      "mailScope": {
+        "kind": "project",
+        "projectPath": "/home/gulp/projects/tiny-claude-plugins"
+      },
+      "codex": {
+        "adapter": "headless-app-server-owner",
+        "ownership": "explicit-handoff",
+        "threadId": "019fab31-bde7-7c21-85c7-19be43f64602",
+        "cwd": "/home/gulp/projects/tiny-claude-plugins",
+        "transport": { "kind": "private-stdio" }
+      },
+      "delivery": {
+        "batchWindowMs": 500,
+        "maxEvents": 50,
+        "maxBytes": 32768,
+        "urgentDuringTurn": "steer",
+        "routineDuringTurn": "queue"
+      }
+    }
+  }
+}

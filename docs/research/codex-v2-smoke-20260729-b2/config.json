@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "statePath": "/tmp/amc-smoke-20260729-b2/state.sqlite3",
+  "bindings": {
+    "smoke-20260729-b2": {
+      "agent": "MagentaGoose",
+      "mailScope": {
+        "kind": "project",
+        "projectPath": "/home/gulp/projects/tiny-claude-plugins"
+      },
+      "codex": {
+        "adapter": "headless-app-server-owner",
+        "ownership": "explicit-handoff",
+        "threadId": "019fab48-d629-7111-8f81-a44af9eafd05",
+        "cwd": "/home/gulp/projects/tiny-claude-plugins",
+        "transport": {
+          "kind": "private-stdio"
+        }
+      },
+      "delivery": {
+        "batchWindowMs": 1,
+        "maxEvents": 1,
+        "maxBytes": 32768,
+        "urgentDuringTurn": "steer",
+        "routineDuringTurn": "queue"
+      }
+    }
+  }
+}

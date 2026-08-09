@@ -1,0 +1,26 @@
+{
+  "name": "@agent-mail/codex-ingress",
+  "version": "0.1.0-phase0",
+  "exports": "./src/cli.ts",
+  "tasks": {
+    "check": "deno check src/**/*.ts",
+    "lint": "deno lint src tests",
+    "fmt:check": "deno fmt --check src tests deno.json README.md",
+    "test": "deno test --allow-read --allow-write --allow-env --allow-ffi tests/",
+    "test:store": "deno test --allow-read --allow-write --allow-env --allow-ffi tests/f3_migrations_test.ts tests/f4_memory_store_test.ts tests/f5_sqlite_store_test.ts",
+    "cli": "deno run --allow-read --allow-env src/cli.ts"
+  },
+  "compilerOptions": {
+    "strict": true
+  },
+  "fmt": {
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["require-await"]
+    }
+  }
+}

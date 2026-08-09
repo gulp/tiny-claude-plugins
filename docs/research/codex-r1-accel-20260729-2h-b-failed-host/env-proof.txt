@@ -1,0 +1,2 @@
+AGENT_MAIL_MAILBOX_ROOT=/home/gulp/.mcp_agent_mail_git_mailbox_repo
+CODEX_INGRESS_ENABLED=false

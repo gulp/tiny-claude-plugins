@@ -1,0 +1,2 @@
+amc-r1-accel-2h:shadow.1 pid=990347
+amc-r1-accel-2h: 2 windows (created Wed Jul 29 03:58:59 2026)

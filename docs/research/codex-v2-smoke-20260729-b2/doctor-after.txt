@@ -1,0 +1,18 @@
+Binding: smoke-20260729-b2
+Agent: MagentaGoose
+Project: home-gulp-projects-tiny-claude-plugins
+Thread: 019fab48-d629-7111-8f81-a44af9eafd05
+Owner: unknown
+Cursor: 28263
+Queue: 0
+Health: UNHEALTHY
+  config: healthy [CONFIG_OK] binding=smoke-20260729-b2 agent=MagentaGoose adapter=headless-app-server-owner runtime consistent
+  mailbox: healthy [MAILBOX_OK] canonical inbox readable layout ok inbox=/home/gulp/.mcp_agent_mail_git_mailbox_repo/projects/home-gulp-projects-tiny-claude-plugins/agents/MagentaGoose/inbox scanned<=64
+  store: healthy [STORE_OK] schema=2
+  lease: unhealthy [LEASE_MISSING] binding has no lease
+  owner: unknown [OWNER_STATE_UNKNOWN] no fresh authoritative owner
+  thread: healthy [THREAD_OK] thread=019fab48-d629-7111-8f81-a44af9eafd05
+  cursor: healthy [CURSOR_OK] lastMessageId=28263
+  queue: healthy [QUEUE_OK] pending=0
+  version: unhealthy [VERSION_DRIFT] codex=0.145.0 baseline=0.144.6 disposition=drift_probe; newer than acceptance baseline 0.144.6; evidence is drift-only; statusSchema=1 component=0.1.0-phase0 store=2
+Delivery flag: enabled

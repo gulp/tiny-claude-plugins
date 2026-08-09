@@ -1,0 +1,1 @@
+config_invalid: bindings.smoke-20260729-b2.delivery.batchWindowMs must be an integer in [1,60000]

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Mail Monitor"
+  short_description: "Start and diagnose non-consuming Agent Mail monitoring"
+  default_prompt: "Use $agent-mail-monitor to start a Codex monitor for my Agent Mail identity."

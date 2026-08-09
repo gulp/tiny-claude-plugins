@@ -86,7 +86,7 @@ export class CodexIngressHarness {
       throw new Error("root, project, and agent are required");
     }
     this.inbox = `${options.root}/projects/${slug(options.project)}/agents/${options.agent}/inbox`;
-    this.#nowNs = options.nowNs ?? (() => Temporal.Now.instant().epochNanoseconds);
+    this.#nowNs = options.nowNs ?? (() => BigInt(Date.now()) * 1_000_000n);
   }
 
   record(

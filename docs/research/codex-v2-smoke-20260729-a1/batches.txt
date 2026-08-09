@@ -1,0 +1,4 @@
+             batch_id                 state    first_message_id  last_message_id            accepted_turn_id
+-----------------------------------  --------  ----------------  ---------------  ------------------------------------
+batch:smoke-20260729-a1:28247-28247  accepted             28247            28247  019fab35-c45a-7fa0-985a-8256ec83ca35
+batch:smoke-20260729-a1:28248-28248  accepted             28248            28248  019fab35-cc36-7062-8abb-28846aa52b42

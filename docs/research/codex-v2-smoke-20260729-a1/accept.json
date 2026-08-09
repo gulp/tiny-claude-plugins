@@ -1,0 +1,23 @@
+{
+  "fixture_message_id": 28248,
+  "collateral_message_id": 28247,
+  "batches": [
+    {
+      "batch_id": "batch:smoke-20260729-a1:28247-28247",
+      "state": "accepted",
+      "turn_id": "019fab35-c45a-7fa0-985a-8256ec83ca35",
+      "note": "collateral Agent Mail contact-request to disposable AmberHarbor"
+    },
+    {
+      "batch_id": "batch:smoke-20260729-a1:28248-28248",
+      "state": "accepted",
+      "turn_id": "019fab35-cc36-7062-8abb-28846aa52b42",
+      "note": "intentional 6.10 smoke fixture"
+    }
+  ],
+  "thread_id": "019fab31-bde7-7c21-85c7-19be43f64602",
+  "cursor_before": 0,
+  "cursor_after": 28248,
+  "fallback_used": false,
+  "competing_owner": false
+}

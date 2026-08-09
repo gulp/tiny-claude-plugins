@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "label": "R1-accelerated-initial-health",
+  "bindingId": "r1-accel-20260729-2h-b",
+  "pid": 939767,
+  "at_utc": "2026-07-29T00:55:59Z",
+  "alive_after_25s": true,
+  "shadow_log_has_started": true,
+  "shadow_finished_absent": true,
+  "delivery": "CODEX_INGRESS_ENABLED=false"
+}

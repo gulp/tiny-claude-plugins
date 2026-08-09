@@ -1,0 +1,1 @@
+target=amc-r1-accel-2h:shadow.1 pane_pid=990347 dead=0

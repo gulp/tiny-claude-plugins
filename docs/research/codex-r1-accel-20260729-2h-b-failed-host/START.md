@@ -1,0 +1,14 @@
+# R1-accelerated 2h shadow soak — restart (b)
+- label: **R1-accelerated** (does not waive 24h soak; no R2)
+- authorization: AzureFalcon #28270 (restart after #28272 launch-audit failure)
+- prior failure: lease expired — fixed in shadow.ts renewLease; evidence `docs/research/codex-r1-accel-20260729-2h-failed-lease/`
+- binding: r1-accel-20260729-2h-b
+- agent: OliveCedar
+- project: /home/gulp/projects/tiny-claude-plugins
+- mailbox: /home/gulp/.mcp_agent_mail_git_mailbox_repo
+- started_at_utc: 2026-07-29T00:55:33Z
+- planned_end_utc: 2026-07-29T02:55:33Z
+- host: setsid + nohup (survives launcher shell); **no** systemd enable/linger
+- command: /tmp/amc-r1-accel-20260729-2h-b/bin/run-shadow.sh
+- evidence: /tmp/amc-r1-accel-20260729-2h-b/evidence/
+- final_artifact: /tmp/amc-r1-accel-20260729-2h-b/shadow/r1-accel-20260729-2h-b.json

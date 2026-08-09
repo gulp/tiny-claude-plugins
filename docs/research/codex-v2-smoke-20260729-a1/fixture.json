@@ -1,0 +1,9 @@
+{
+  "message_id": 28248,
+  "created_ts": "2026-07-29T00:10:54.161886Z",
+  "subject": "6.10 smoke fixture wake",
+  "from": "OliveCedar",
+  "to": ["AmberHarbor"],
+  "thread_id": "tcp-efp.6.10-smoke",
+  "body_logged": false
+}

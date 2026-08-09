@@ -159,6 +159,23 @@ Deno.test("F1: binding names reject path and systemd instance traversal", () => 
   });
 });
 
+Deno.test("F1: product scope fails loud until the production kernel supports it", () => {
+  assertThrows(
+    () =>
+      parseConfig({
+        ...valid,
+        bindings: {
+          demo: {
+            ...valid.bindings.demo,
+            mailScope: { kind: "product", productKey: "example-product" },
+          },
+        },
+      }),
+    "scope_invalid",
+    EXIT.CONFIG,
+  );
+});
+
 Deno.test("F1: delivery numeric limits require finite positive integers", () => {
   const invalid: Record<string, unknown[]> = {
     batchWindowMs: [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 60_001, "500"],
@@ -259,10 +276,24 @@ Deno.test("F1: feature flags resolve once from env defaults", () => {
   assert(flags.ownership === "explicit-handoff", "ownership default matches S5");
 });
 
-Deno.test("F1: doctor CLI prints resolved binding deterministically", async () => {
+Deno.test("O1: doctor CLI fails loud when live state is missing", async () => {
   const dir = await Deno.makeTempDir({ prefix: "agent-mail-codex-f1-" });
   const path = `${dir}/config.json`;
-  await Deno.writeTextFile(path, JSON.stringify(valid, null, 2));
+  const isolated = {
+    ...valid,
+    statePath: `${dir}/missing.sqlite3`,
+    bindings: {
+      demo: {
+        ...valid.bindings.demo,
+        agent: "AzureFalcon",
+        mailScope: {
+          kind: "project",
+          projectPath: "/home/fixture/o1-cli-missing",
+        },
+      },
+    },
+  };
+  await Deno.writeTextFile(path, JSON.stringify(isolated, null, 2));
   const chunks: string[] = [];
   const original = console.log;
   console.log = (...args: unknown[]) => {
@@ -270,19 +301,19 @@ Deno.test("F1: doctor CLI prints resolved binding deterministically", async () =
   };
   try {
     const code = await main(["doctor", "--config", path, "--binding", "demo"]);
-    assert(code === EXIT.OK, `doctor exit ${code}`);
+    assert(code === EXIT.FAILURE, `doctor exit ${code}`);
     const text = chunks.join("\n");
-    assert(text.includes("[PASS] config"), text);
-    assert(text.includes('"binding": "demo"'), text);
-    assert(text.includes('"adapter": "headless-app-server-owner"'), text);
-    assert(text.includes('"ownership": "explicit-handoff"'), text);
+    assert(text.includes("Binding: demo"), text);
+    assert(text.includes("Health: UNHEALTHY"), text);
+    assert(text.includes("[STORE_UNREADABLE]"), text);
+    assert(text.includes("[MAILBOX_INBOX_MISSING]"), text);
   } finally {
     console.log = original;
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("O3: run CLI usage documents durable supervisor (no skeleton refusal)", async () => {
+Deno.test("O3: run CLI usage documents production kernel (no skeleton refusal)", async () => {
   const chunks: string[] = [];
   const original = console.log;
   console.log = (...args: unknown[]) => {
@@ -292,9 +323,9 @@ Deno.test("O3: run CLI usage documents durable supervisor (no skeleton refusal)"
     const code = await main(["--help"]);
     assert(code === EXIT.OK, `help exit ${code}`);
     const text = chunks.join("\n");
-    assert(text.includes("run holds the binding lease"), text);
+    assert(text.includes("createProductionKernel"), text);
     assert(!text.includes("Does not deliver mail yet"), text);
-    assert(text.includes("supervisor failure"), text);
+    assert(text.includes("private codex app-server"), text);
     assert(text.includes("run --shadow"), text);
     assert(text.includes("CODEX_INGRESS_SHADOW"), text);
   } finally {
@@ -317,6 +348,29 @@ Deno.test("R1: run --shadow refuses when delivery enabled", async () => {
     const code = await main(["run", "--config", path, "--binding", "demo", "--shadow"]);
     assert(code === EXIT.OWNERSHIP, `expected ownership exit, got ${code}`);
     assert(err.join("\n").includes("shadow_refused"), err.join("\n"));
+  } finally {
+    console.error = original;
+    if (prev === undefined) Deno.env.delete("CODEX_INGRESS_ENABLED");
+    else Deno.env.set("CODEX_INGRESS_ENABLED", prev);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("O3: production run refuses while delivery feature flag is off", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "agent-mail-codex-o3-disabled-" });
+  const path = `${dir}/config.json`;
+  await Deno.writeTextFile(path, JSON.stringify(valid, null, 2));
+  const prev = Deno.env.get("CODEX_INGRESS_ENABLED");
+  Deno.env.delete("CODEX_INGRESS_ENABLED");
+  const err: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    err.push(args.map(String).join(" "));
+  };
+  try {
+    const code = await main(["run", "--config", path, "--binding", "demo"]);
+    assert(code === EXIT.OWNERSHIP, `expected ownership exit, got ${code}`);
+    assert(err.join("\n").includes("run_refused"), err.join("\n"));
   } finally {
     console.error = original;
     if (prev === undefined) Deno.env.delete("CODEX_INGRESS_ENABLED");

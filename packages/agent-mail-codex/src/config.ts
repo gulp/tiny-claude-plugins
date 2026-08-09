@@ -109,7 +109,12 @@ function parseScope(raw: unknown, ctx: string): MailScope {
     };
   }
   if (kind === "product") {
-    return { kind: "product", productKey: requireString(raw, "productKey", ctx) };
+    requireString(raw, "productKey", ctx);
+    fail(
+      "scope_invalid",
+      `${ctx}: product mailScope is not supported by the v1 production kernel`,
+      EXIT.CONFIG,
+    );
   }
   fail("scope_invalid", `${ctx}: mailScope.kind must be project|product`, EXIT.CONFIG);
 }

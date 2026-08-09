@@ -1,0 +1,12 @@
+# R1-accelerated 2h shadow — tmux restart (c)
+- label: **R1-accelerated**
+- auth: AzureFalcon #28270; relaunch per #28274 (durable tmux host)
+- prior: a lease-expired; b failed-host (setsid/nohup from agent tool)
+- binding: r1-accel-20260729-2h-c
+- agent: OliveCedar
+- tmux: session `amc-r1-accel-2h` window `shadow`
+- started_at_utc: 2026-07-29T00:58:59Z
+- planned_end_utc: 2026-07-29T02:58:59Z
+- CODEX_INGRESS_ENABLED=false
+- no systemd enable/linger
+- evidence: /tmp/amc-r1-accel-20260729-2h-c/

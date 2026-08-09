@@ -1,13 +1,38 @@
 # Plan: unified canonical git-mailbox watch backend
 
-**Status:** proposed · **Supersedes beads:** `tcp-p0x.6`, `tcp-p0x.14` · **Epic parent:** `tcp-p0x`
+**Status:** implemented in `agent-mail-monitor` 0.5.0 · **Supersedes beads:**
+`tcp-p0x.6`, `tcp-p0x.14` · **Epic parent:** `tcp-p0x`
+
+## Checkpoint — complete
+
+| Item | State | Ground truth |
+|---|---|---|
+| Canonical filesystem reader | Complete | `plugins/agent-mail-monitor/src/core/mailbox.ts` |
+| Project/all-project watch loop | Complete | `plugins/agent-mail-monitor/src/commands/watch.ts` |
+| Source-project notification tags | Complete | Watch tests cover both scopes |
+| Consuming `am check-inbox` notification path | Retired | No production notification call site |
+| Ack/urgency mode and filters | Complete | `MAIL_WATCH_MODE` and `MAIL_WATCH_FILTER` |
+| Released surface | Complete | `agent-mail-monitor` 0.5.0 |
+
+There is no remaining implementation task in this plan. Product scope stays an
+explicit non-consuming product-bus command; it does not silently fall back to a
+filesystem approximation.
+
+### Resume here
+
+Continue with
+[`codex-agent-mail-ingress.md`](codex-agent-mail-ingress.md). Reuse
+`src/core/mailbox.ts` behind the proposed `MailboxSource` boundary. Do not reopen
+the filesystem-backend design unless the canonical mailbox layout changes or
+Agent Mail publishes a stable non-consuming cursor API.
 
 ## Destination
 
 The `agent-mail-monitor` watch reads new mail from the **append-only canonical
-git-mailbox on disk**, watermarks by message id, and notifies — across **one, all,
-or a product-scoped subset** of the identity's projects, tagging each notification
-with the source project. `am check-inbox` is removed from the notification path.
+git-mailbox on disk**, watermarks by message id, and notifies across **one or
+all** of the identity's projects, tagging each notification with the source
+project. The separate `product` command reads an explicitly named product bus.
+`am check-inbox` is removed from every notification path.
 
 One backend swap collapses two separately-filed features (`tcp-p0x.6`
 cross-project watch, `tcp-p0x.14` FS backend) and dissolves three separately-filed
@@ -16,8 +41,9 @@ insight is that they share a single root cause.
 
 ## Background: one root cause
 
-The current watch polls `am check-inbox --agent <A> --project <dir>` (`src/core/am.ts`
-`pollInbox`). Two structural problems flow from that one choice:
+The retired watch polled `am check-inbox --agent <A> --project <dir>`
+(`src/core/am.ts` `pollInbox`). Two structural problems flowed from that one
+choice:
 
 1. **`check-inbox` consumes.** Source-verified against am v0.3.21: without
    `--direct` the call unconditionally takes the daemon path and invokes the
@@ -98,7 +124,7 @@ Product Bus, `am products inbox --since-ts`), swap the FS reader for that commit
 API and keep the FS reader as the daemon-agnostic / offline fallback. That is the
 graduation from interim coupling to committed contract — **not** this plan's work.
 
-## Decomposition (intended beads under a fresh epic)
+## Historical decomposition
 
 New epic **E**: *unified canonical git-mailbox watch backend* (supersedes
 `tcp-p0x.6`, `tcp-p0x.14`). Priority P1.

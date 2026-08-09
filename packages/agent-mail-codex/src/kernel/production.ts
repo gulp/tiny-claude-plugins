@@ -14,6 +14,7 @@ import {
   type ProductionOwnerOptions,
   type ProductionOwnerPackage,
 } from "../owner/production_owner.ts";
+import { INGRESS_COMPONENT_VERSION } from "../owner/protocol_compat.ts";
 import { TurnSession } from "../owner/turn_session.ts";
 import {
   type ModelInput,
@@ -47,6 +48,7 @@ export class ProductionThreadOwnerAdapter implements ThreadOwnerAdapter {
   #session: TurnSession | null = null;
   #acquired = false;
   #closed = false;
+  #initialized = false;
 
   static create(
     options: ProductionOwnerOptions & { projectPath: string },
@@ -110,6 +112,18 @@ export class ProductionThreadOwnerAdapter implements ThreadOwnerAdapter {
     this.#requireOpen();
     if (!this.#binding) {
       throw new OwnershipError("connect must precede acquire", "not_connected");
+    }
+    // Real Codex App Server requires initialize before thread/resume|start.
+    // Fake peers tolerate a no-op initialize; production must not skip it.
+    if (!this.#initialized) {
+      await this.#owner.transport.initialize(
+        {
+          name: "agent-mail-codex",
+          version: INGRESS_COMPONENT_VERSION,
+        },
+        {},
+      );
+      this.#initialized = true;
     }
     const proof = await this.#owner.lifecycle.acquire({
       bindingId: this.#binding.bindingId,

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "gate": "r1-shadow",
+  "deliveryEnabled": false,
+  "ok": true,
+  "reason": "shutdown",
+  "detail": null,
+  "baselineCursor": 28272,
+  "observedCursor": 28274,
+  "deliveryCursor": 0,
+  "observedCount": 1,
+  "referenceCount": 1,
+  "batchesEnqueued": 1,
+  "deadLetterSkips": [],
+  "compare": {
+    "ok": true,
+    "missedIds": [],
+    "extraIds": [],
+    "wrongScopeIds": [],
+    "malformedSilent": [],
+    "shadowCount": 1,
+    "referenceCount": 1
+  },
+  "modelCalls": 0,
+  "constraints": {
+    "noCodexDelivery": true,
+    "deliveryCursorUnchanged": true
+  }
+}

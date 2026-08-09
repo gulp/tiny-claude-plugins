@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "statePath": "/REPLACE_HOME/.local/state/agent-mail-codex/example-project/state.sqlite3",
+  "bindings": {
+    "example-project": {
+      "agent": "CobaltJaguar",
+      "mailScope": {
+        "kind": "project",
+        "projectPath": "/REPLACE_PROJECT"
+      },
+      "codex": {
+        "adapter": "headless-app-server-owner",
+        "ownership": "explicit-handoff",
+        "threadId": "thread-example",
+        "cwd": "/REPLACE_PROJECT",
+        "transport": {
+          "kind": "private-stdio"
+        }
+      },
+      "delivery": {
+        "batchWindowMs": 500,
+        "maxEvents": 50,
+        "maxBytes": 32768,
+        "urgentDuringTurn": "steer",
+        "routineDuringTurn": "queue"
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+codex_cli: codex-cli 0.145.0
+acceptance_baseline: 0.144.6
+disposition: drift-only
+model: gpt-5.6-sol
+binding: smoke-20260729-b2
+agent: MagentaGoose
+thread: 019fab48-d629-7111-8f81-a44af9eafd05
+git_sha: 30465f3
+operator: OliveCedar
+started_at_utc: 2026-07-29T00:33:37Z
+note: contact OliveCedar↔MagentaGoose pre-approved; no auto_contact on fixture

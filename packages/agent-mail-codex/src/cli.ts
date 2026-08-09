@@ -19,7 +19,8 @@ import {
   type OwnerStateStore,
   type PersistedOwnerState,
 } from "./operator/ownership_commands.ts";
-import { resolveCodexBin, runProductionIngress } from "./operator/production_run.ts";
+import { CodexBinError, resolveNativeCodexBin } from "./operator/codex_bin.ts";
+import { runProductionIngress } from "./operator/production_run.ts";
 import {
   APP_SERVER_ENV_ALLOWLIST,
   buildAppServerEnv,
@@ -58,8 +59,8 @@ Feature flags (env, resolved once at startup):
   CODEX_INGRESS_URGENT_STEER
   CODEX_INGRESS_DETERMINISTIC_COLLAPSE
   CODEX_INGRESS_METRICS_HTTP
+  CODEX_BIN                       absolute native Codex ELF (required; never a PATH npx wrapper)
   CODEX_INGRESS_SHADOW=1          same as run --shadow (R1)
-  CODEX_BIN                       absolute path to codex (production run)
 
 Does not read MAIL_WATCH_* (Claude monitor).
 run spawns a private codex app-server and drives createProductionKernel.
@@ -234,12 +235,13 @@ async function runPermissionsCommand(options: {
   const packageRoot = Deno.env.get("AGENT_MAIL_CODEX_ROOT") ??
     parentDir(parentDir(new URL(import.meta.url).pathname));
   const paths = resolveRuntimePaths(options.config, options.bindingName);
-  const codexBin = resolveCodexBin();
-  if (!codexBin.startsWith("/")) {
-    console.error(
-      "permissions_refused: CODEX_BIN must be an absolute path (set CODEX_BIN)",
-    );
-    return EXIT.DEPENDENCY;
+  let codexBin: string;
+  try {
+    codexBin = await resolveNativeCodexBin();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`permissions_refused: ${message}`);
+    return error instanceof CodexBinError ? error.exitCode : EXIT.DEPENDENCY;
   }
   try {
     const permissions = await computeServicePermissions({

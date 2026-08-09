@@ -24,8 +24,19 @@ import {
   serveUnixLiveOwnership,
 } from "./live_ownership.ts";
 import type { PersistedOwnerState } from "./ownership_commands.ts";
+import { resolveNativeCodexBin } from "./codex_bin.ts";
 import { buildAppServerEnv } from "./service_permissions.ts";
 import { resolveRuntimePaths, type RuntimeSnapshot, supervisorOwnerId } from "./supervisor.ts";
+
+/** @deprecated Prefer resolveNativeCodexBin — kept as sync path-only helper for tests. */
+export function resolveCodexBin(explicit?: string): string {
+  if (explicit) return explicit;
+  const fromEnv = Deno.env.get("CODEX_BIN");
+  if (fromEnv) return fromEnv;
+  return "codex";
+}
+
+export { resolveNativeCodexBin } from "./codex_bin.ts";
 
 export type SpawnedAppServer = {
   readable: ReadableStream<Uint8Array>;
@@ -74,13 +85,6 @@ function configHash(binding: BindingConfig): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-export function resolveCodexBin(explicit?: string): string {
-  if (explicit) return explicit;
-  const fromEnv = Deno.env.get("CODEX_BIN");
-  if (fromEnv) return fromEnv;
-  return "codex";
 }
 
 /** Default private-stdio App Server spawn — one child per binding process. */
@@ -342,8 +346,12 @@ export async function runProductionIngress(
 
   const startSession = async (): Promise<void> => {
     if (session) throw new Error("production owner session already open");
+    // Injected spawners (tests/fakes) skip native ELF validation; live spawn does not.
+    const codexBin = options.spawnAppServer
+      ? resolveCodexBin(options.codexBin)
+      : await resolveNativeCodexBin(options.codexBin);
     const child = await spawn({
-      codexBin: resolveCodexBin(options.codexBin),
+      codexBin,
       cwd: binding.codex.cwd,
     });
     const production = createProductionKernel({
