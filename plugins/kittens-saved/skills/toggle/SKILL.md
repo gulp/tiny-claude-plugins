@@ -3,7 +3,7 @@ name: toggle
 description: >
   Turn the kittens-saved Stop-hook enforcement on or off for THIS session. Use
   when the user says "kittens off", "silence the kitten reminder", "stop the
-  kitten nudges", "kittens on", "re-arm kittens", or runs /kittens-saved:toggle.
+  kitten nudges", "kittens on", "re-arm kittens", or runs toggle.
   Off silences the Stop-hook reminder and the statusline segment for this
   session only; the ledger keeps recording.
 argument-hint: "on|off|status"

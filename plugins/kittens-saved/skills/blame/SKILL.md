@@ -6,7 +6,7 @@ description: >
   phrase is a gated add. Use when you or the user catch a new "opus laziness"
   tell ("both yours", "you can take it from here", a handback heading that
   contradicts the tally), want to list/remove/test denylist entries, or run
-  /kittens-saved:blame. Adding is HUMAN-GATED: never write without confirming.
+  blame. Adding is HUMAN-GATED: never write without confirming.
 argument-hint: "[ls | add \"<phrase>\" | rm \"<phrase>\" | edit | test \"<text>\"]"
 allowed-tools: Bash(python3:*), AskUserQuestion
 disable-model-invocation: true

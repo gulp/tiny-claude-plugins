@@ -2,14 +2,14 @@
 name: kittens
 description: >
   Front door to the kittens-saved plugin — reachable as bare /kittens (plus the
-  namespaced /kittens-saved:kittens). Inspect and repair, don't mutate the
+  namespaced kittens). Inspect and repair, don't mutate the
   ledger. Dispatches to status (is enforcement live + this session's tally),
   stats (session vs project totals), doctor (health + config check, with --fix),
   config (effective settings), denylist/warn (list the two tiers), and zen. Use
   when the user runs /kittens, or asks "kitten status", "kitten stats", "kittens
   doctor", "check the kittens plugin", "is kittens enforcing", "kitten config".
-  For saving a kitten or the escape hatch use /kittens-saved:counting-saved-kittens;
-  to silence a session use /kittens-saved:toggle.
+  For saving a kitten or the escape hatch use counting-saved-kittens;
+  to silence a session use toggle.
 argument-hint: "[status|stats|doctor|config|denylist|warn|zen] [--fix] [--json]"
 allowed-tools: Bash(python3:*)
 disable-model-invocation: true
@@ -51,4 +51,4 @@ All other subcommands return **0**.
 
 This skill is **read/repair only** — it never records a kitten or takes the
 escape hatch. Those mutate the ledger and live in
-`/kittens-saved:counting-saved-kittens`.
+`counting-saved-kittens`.

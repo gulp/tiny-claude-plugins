@@ -6,7 +6,7 @@ description: >
   style/sycophancy tells with a gentle [i] reminder that teaches. Each entry is
   {matcher, reason, escape}. Verbs: ls, add, rm, test. Use when you or the user
   spot a soft tell worth a heads-up but not a hard gate ("I'll…", "you're
-  absolutely right", "the sharpest point"), or run /kittens-saved:warn. Adding
+  absolutely right", "the sharpest point"), or run warn. Adding
   is HUMAN-GATED.
 argument-hint: "[ls | test \"<text>\" | add \"<matcher>\" | rm \"<matcher>\"]"
 allowed-tools: Bash(python3:*), AskUserQuestion
@@ -20,7 +20,7 @@ Script: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py" warn …`
 
 ## Deny vs. warn — pick the right tier
 
-- **Denylist (`/kittens-saved:blame`)** — high-confidence **punts**. Fires a
+- **Denylist (`blame`)** — high-confidence **punts**. Fires a
   nudge to *act*. Bare pattern.
 - **Warnlist (here)** — lower-confidence **style/sycophancy** tells. Fires a
   gentle `[i]` that *teaches*, never blocks, capped per session. Carries a

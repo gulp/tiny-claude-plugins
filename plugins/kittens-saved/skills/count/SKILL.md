@@ -5,7 +5,7 @@ description: >
   of punted), how many escape hatches were granted vs denied, and how many items
   are waiting on the human. Use when the user asks "how many kittens saved",
   "kitten count", "kittens-saved stats", "show the kitten tally", or runs
-  /kittens-saved:count.
+  count.
 argument-hint: "[--scope session|all]"
 allowed-tools: Bash(python3:*)
 disable-model-invocation: true
