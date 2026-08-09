@@ -1,21 +1,21 @@
 ---
-name: kittens-saved
+name: kittens
 description: >
-  User-ops entry point for the kittens-saved plugin — inspect and repair, don't
-  mutate the ledger. Dispatches to status (is enforcement live + this session's
-  tally), stats (session vs project totals), doctor (health + config check, with
-  --fix), and config (effective settings and how to change them). Use when the
-  user runs /kittens-saved:kittens-saved, or asks "kitten status", "kitten
-  stats", "kittens doctor", "check the kittens plugin", "is kittens enforcing",
-  "kitten config". For saving a kitten or the escape hatch use
-  /kittens-saved:counting-saved-kittens; to silence a session use
-  /kittens-saved:toggle.
-argument-hint: "[status|stats|doctor|config|denylist|zen] [--fix] [--json]"
+  Front door to the kittens-saved plugin — reachable as bare /kittens (plus the
+  namespaced /kittens-saved:kittens). Inspect and repair, don't mutate the
+  ledger. Dispatches to status (is enforcement live + this session's tally),
+  stats (session vs project totals), doctor (health + config check, with --fix),
+  config (effective settings), denylist/warn (list the two tiers), and zen. Use
+  when the user runs /kittens, or asks "kitten status", "kitten stats", "kittens
+  doctor", "check the kittens plugin", "is kittens enforcing", "kitten config".
+  For saving a kitten or the escape hatch use /kittens-saved:counting-saved-kittens;
+  to silence a session use /kittens-saved:toggle.
+argument-hint: "[status|stats|doctor|config|denylist|warn|zen] [--fix] [--json]"
 allowed-tools: Bash(python3:*)
 disable-model-invocation: true
 ---
 
-# kittens-saved:kittens-saved
+# /kittens  (kittens-saved:kittens)
 
 The read/repair front door for the plugin. Run the bundled script with the
 requested action and **print its output verbatim** — do not reinterpret the
