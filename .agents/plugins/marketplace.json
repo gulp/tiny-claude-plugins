@@ -1,0 +1,20 @@
+{
+  "name": "tiny-claude-plugins",
+  "interface": {
+    "displayName": "Tiny Claude Plugins"
+  },
+  "plugins": [
+    {
+      "name": "agent-mail-monitor",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agent-mail-monitor"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
