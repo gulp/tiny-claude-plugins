@@ -202,3 +202,26 @@ judge you can't trust).
 - `:automata` description carries the Karpathy credit; `:vanilla` (in
   ultraralph) carries the ghuntley credit.
 - Statechart source: this file's mermaid block is canonical.
+
+## External evidence: prime-agent (read 2026-08-09)
+
+PrimeIntellect-ai/prime-agent ships the vertically-integrated version of this
+ladder (`/goal` ↔ ultragoal, `/autonomous` + gate commands ↔ ultraralph).
+Two imports for this spec:
+
+- **Self-grading contrast.** Their goal ends only when the *agent* calls
+  `goal.complete()` — exactly the self-grading this spec rejected. Their own
+  docs hedge it ("a passed gate checks only what that gate verifies; reaching
+  a limit does not imply task success"), which is the honest form of the gap
+  the external JUDGE closes. Keep the judge.
+- **Seam-file completeness (feeds the ultraralph seam spec).** In prime-agent,
+  goal state (objective, token/wall-clock accounting, continuation count) and
+  the continuation policy talk **in-process**. Our seam is a file crossing a
+  process boundary — so the rubric + attempt ledger must externalize the
+  *spend accounting as well as the verdicts* (tokens/time consumed at
+  handoff, budget remaining), or the downstream rung cannot honor the budget
+  the upstream rung started. One mechanism worth copying into the iterate
+  path: don't rerun a failed gate when the workspace hash is unchanged.
+
+Vault companion: `wiki/prime-agent.md` (everything vault) carries the full
+comparison.
