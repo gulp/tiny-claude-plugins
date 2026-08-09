@@ -71,6 +71,30 @@ ZEN_OF_KITTENS = [
     "When the next step is obvious, take it — don't narrate it.",
 ]
 
+# The SOFT tier. Where the denylist is high-confidence PUNT tells (a nudge to act),
+# the warnlist is lower-confidence STYLE/sycophancy tells (a gentle [i] that
+# teaches). Each entry carries a `reason` (why it reads as a tell) and an
+# `escape` (when it's fine) — that's why it must be structured, not flat text.
+# Seeded from the community folk-taxonomy (docs/research/…-telltale-signs). Users
+# extend via `warn add` → warnlist.json.
+WARN_DEFAULTS = [
+    {"matcher": r"\bi'?ll\b",
+     "reason": "\"I'll …\" often precedes a deferral — a thing you promise instead of doing now.",
+     "escape": "if you genuinely just did it, or it's truly the human's, ignore and stop."},
+    {"matcher": r"you'?re absolutely right",
+     "reason": "reflexive agreement reads as sycophancy, not analysis.",
+     "escape": "if you actually verified the claim, say how; else drop the flourish."},
+    {"matcher": r"the sharpest (point|thing|insight|version)",
+     "reason": "significance-theater — asserts importance without adding any.",
+     "escape": "cut it, or name the specific thing that's sharp."},
+    {"matcher": r"let me (pressure|stress)[- ]?test",
+     "reason": "narrating rigor instead of doing it.",
+     "escape": "if you're about to actually test it, just run the test."},
+    {"matcher": r"deliberately did not",
+     "reason": "often precedes a punt — a thing you chose not to do and are handing back.",
+     "escape": "if it's a genuine scope/safety decision you're disclosing honestly, ignore and stop."},
+]
+
 _ID_OK = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -134,6 +158,23 @@ def _cfg_debug() -> bool:
     to stderr, prefixed `[kittens-saved-debug]`, so you can see it in the
     transcript / `claude --debug` without decoding the hook JSON."""
     return (os.environ.get("CLAUDE_PLUGIN_OPTION_DEBUG") or "false").strip().lower() == "true"
+
+
+def _cfg_strip_quotes() -> bool:
+    """Plugin userConfig `strip_quotes` (default true): drop double-quoted spans
+    before matching, so a quoted meta-mention of a tell (discussing the phrase)
+    doesn't trip the hook — only the model's own un-quoted prose does."""
+    return (os.environ.get("CLAUDE_PLUGIN_OPTION_STRIP_QUOTES") or "true").strip().lower() != "false"
+
+
+def _cfg_warn_repeat() -> int:
+    """Plugin userConfig `warn_repeat` (default 2): how many times a single warn
+    matcher may fire per session before it goes quiet — 0 disables the warn tier,
+    1 is once-only, 2 reinforces once. Keeps the [i] gentle, not naggy."""
+    try:
+        return max(0, int(os.environ.get("CLAUDE_PLUGIN_OPTION_WARN_REPEAT") or "2"))
+    except ValueError:
+        return 2
 
 
 def _dbg(content: str) -> None:
@@ -247,8 +288,52 @@ def _load_denylist() -> list:
     return out
 
 
+# Block-structure idioms lifted from marko/block.py (frostming/marko, zero-dep):
+# the CommonMark `{,3}` leading-space threshold, `[^\n\S]` horizontal whitespace,
+# and the fence-close substring trick (open run `in` close run == same char and
+# length >=). Inline code + quotes stay regex — even marko treats them as inline.
+_FENCE_OPEN = re.compile(r"( {,3})(`{3,}|~{3,})[^\n\S]*(.*)$")
+_FENCE_CLOSE = re.compile(r" {,3}(`+|~+)[^\n\S]*$")
+_BLOCKQUOTE = re.compile(r" {,3}>")
+
+
+def _prose_only(text: str) -> str:
+    """Strip mention-not-handoff spans so the denylist fires only on the model's
+    own prose. Block structure (fenced code, blockquotes) via a CommonMark-aware
+    line scanner; inline code + quotes via regex. Stdlib, bare python3.
+
+    Indented (4-space) code is intentionally NOT stripped: in assistant prose a
+    4-space indent is usually a nested list, and marko only classifies it as code
+    with full block context we don't cheaply have — over-stripping would hide a
+    real punt (a false negative), the worse error for this gate."""
+    if not text:
+        return ""
+    out, fence = [], None  # fence = the open run string, e.g. "```" or "~~~~"
+    for raw in text.split("\n"):
+        if fence is not None:                      # inside a fenced block
+            m = _FENCE_CLOSE.match(raw)
+            if m and fence in m.group(1):          # same char & length >= opener
+                fence = None
+            continue
+        m = _FENCE_OPEN.match(raw)
+        if m and not (m.group(2)[0] == "`" and "`" in m.group(3)):  # backtick-info guard
+            fence = m.group(2)                     # open a fence
+            continue
+        if _BLOCKQUOTE.match(raw):
+            continue
+        out.append(raw)
+    prose = "\n".join(out)
+    prose = re.sub(r"`[^`]*`", " ", prose)         # inline code
+    if _cfg_strip_quotes():
+        prose = re.sub(r"\"[^\"]*\"", " ", prose)  # "straight"
+        prose = re.sub(r"[“”][^“”]*[“”]", " ", prose)  # “curly”
+    return prose
+
+
 def _lazy_hits(text: str) -> list:
-    """The distinct denylist phrases that fire on `text`, in first-seen order."""
+    """The distinct denylist phrases that fire on `text`, in first-seen order.
+    Runs on prose only — quoted/code/blockquote mentions are stripped first."""
+    text = _prose_only(text)
     if not text:
         return []
     seen, out = set(), []
@@ -314,6 +399,80 @@ def _current_response_text(transcript_path, max_wait: float = 3.0, poll: float =
         time.sleep(poll)
         waited += poll
     return ""
+
+
+def _warnlist_path() -> str:
+    return os.path.join(_state_dir(), "warnlist.json")
+
+
+def _load_warn_overrides() -> list:
+    """User warn entries from warnlist.json (a JSON array of {matcher, reason,
+    escape}); [] on a missing/torn file — never fatal."""
+    path = _warnlist_path()
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                return [e for e in data if isinstance(e, dict) and e.get("matcher")]
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+    return []
+
+
+def _write_warn_overrides(entries: list) -> None:
+    with open(_warnlist_path(), "w", encoding="utf-8") as fh:
+        json.dump(entries, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+
+
+def _load_warnlist() -> list:
+    """Compiled warn entries: built-in WARN_DEFAULTS + overrides. Each is a tuple
+    (compiled, reason, escape). A pattern that fails to compile is skipped."""
+    out = []
+    for e in list(WARN_DEFAULTS) + _load_warn_overrides():
+        try:
+            out.append((re.compile(e["matcher"], re.IGNORECASE),
+                        e.get("reason", ""), e.get("escape", "")))
+        except (re.error, KeyError, TypeError):
+            continue
+    return out
+
+
+def _warn_hits(text: str) -> list:
+    """(pattern, reason, escape, matched) for each warn entry firing on prose-only
+    text, first-seen, deduped by pattern."""
+    text = _prose_only(text)
+    if not text:
+        return []
+    seen, out = set(), []
+    for rx, reason, escape in _load_warnlist():
+        m = rx.search(text)
+        if m and rx.pattern not in seen:
+            seen.add(rx.pattern)
+            out.append((rx.pattern, reason, escape, m.group(0).strip()))
+    return out
+
+
+def _warn_check(session: str, resp: str) -> str:
+    """The gentle [i] warn message for this stop, honouring the per-session repeat
+    cap (`warn_repeat`). Records a `warned` ledger event per emitted line so the
+    cap is enforced across the session. '' when nothing to say."""
+    cap = _cfg_warn_repeat()
+    if cap <= 0:
+        return ""
+    already = {}
+    for e in _read(session):
+        if e.get("kind") == "warned":
+            already[e.get("matcher")] = already.get(e.get("matcher"), 0) + 1
+    lines = []
+    for pat, reason, escape, matched in _warn_hits(resp):
+        if already.get(pat, 0) >= cap:
+            continue
+        _append(session, {"kind": "warned", "matcher": pat})
+        tail = f" {escape}" if escape else ""
+        lines.append(f"[i] you used \"{matched}\" — {reason}{tail}")
+    return "\n".join(lines)
 
 
 # ---- subcommands ------------------------------------------------------------
@@ -435,9 +594,11 @@ def cmd_hook_stop(args) -> int:
         print(json.dumps({"decision": "block", "reason": reason}))
         return 0
 
-    # 2. Evidence gate: only nudge if THIS turn's response shows a tell. Wait
-    #    (bounded) for it to flush — a naive read returns the previous turn.
-    hits = _lazy_hits(_current_response_text(payload.get("transcript_path")))
+    # 2. Evidence gate. Read THIS turn's response ONCE (bounded wait for flush).
+    resp = _current_response_text(payload.get("transcript_path"))
+
+    # 2a. Deny tier — nudge on a high-confidence lazy-handoff tell.
+    hits = _lazy_hits(resp)
     if hits:
         shown = ", ".join(f'"{h}"' for h in hits[:3])
         system_message = (
@@ -449,6 +610,13 @@ def cmd_hook_stop(args) -> int:
         )
         _dbg(system_message)
         print(json.dumps({"continue": True, "systemMessage": system_message}))
+        return 0
+
+    # 2b. Warn tier — a gentle [i] on a softer tell, capped per session, never blocks.
+    warn = _warn_check(session, resp)
+    if warn:
+        _dbg(warn)
+        print(json.dumps({"continue": True, "systemMessage": warn}))
         return 0
 
     # 3. Clean stop — silent. No hit, no nag.
@@ -807,6 +975,99 @@ def cmd_denylist(args) -> int:
     return _blame_ls(args.json)
 
 
+def _warn_ls(as_json: bool) -> int:
+    ov = _load_warn_overrides()
+    if as_json:
+        print(json.dumps({"defaults": WARN_DEFAULTS, "overrides": ov, "file": _warnlist_path()}))
+        return 0
+    print(f"🐈 warnlist (soft tier) — {len(WARN_DEFAULTS)} built-in + {len(ov)} override(s)")
+    print("  built-in (read-only):")
+    for e in WARN_DEFAULTS:
+        print(f"    · /{e['matcher']}/  — {e['reason']}")
+    print(f"  overrides ({_warnlist_path()}):")
+    if ov:
+        for i, e in enumerate(ov, 1):
+            print(f"    {i}. /{e['matcher']}/  — {e.get('reason', '')}")
+    else:
+        print("    (none — add with: warn add \"<matcher>\" --reason … --escape … --yes)")
+    return 0
+
+
+def _warn_test(text: str, as_json: bool) -> int:
+    if not text:
+        print("kittens: warn test needs text to check", file=sys.stderr)
+        return 2
+    hits = _warn_hits(text)
+    if as_json:
+        print(json.dumps({"hits": [{"matcher": p, "matched": m} for p, _, _, m in hits]}))
+        return 0
+    if hits:
+        for _, reason, escape, matched in hits:
+            tail = f" ({escape})" if escape else ""
+            print(f"[i] \"{matched}\" — {reason}{tail}")
+    else:
+        print("🐈 clean — no warnlist entry matches this text.")
+    return 0
+
+
+def _warn_add(matcher: str, reason: str, escape: str, yes: bool, is_regex: bool) -> int:
+    if not matcher:
+        print("kittens: warn add needs a matcher", file=sys.stderr)
+        return 2
+    pattern = matcher if is_regex else re.escape(matcher).replace("\\ ", " ")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        print(f"kittens: invalid regex: {exc}", file=sys.stderr)
+        return 2
+    if not yes:
+        print(f"would add (warn): /{pattern}/")
+        print(f"   reason: {reason or '(none — pass --reason)'}")
+        print(f"   escape: {escape or '(none — pass --escape)'}")
+        print("   re-run with --yes to write.  (nothing written)")
+        return 0
+    ov = _load_warn_overrides()
+    ov.append({"matcher": pattern, "reason": reason or "", "escape": escape or ""})
+    _write_warn_overrides(ov)
+    print(f"✓ warned (soft): /{pattern}/  → {_warnlist_path()}")
+    return 0
+
+
+def _warn_rm(matcher: str) -> int:
+    if not matcher:
+        print("kittens: warn rm needs a matcher (see: warn ls)", file=sys.stderr)
+        return 2
+    ov = _load_warn_overrides()
+    esc = re.escape(matcher).replace("\\ ", " ")
+    keep = [e for e in ov if e.get("matcher") not in (matcher, esc)]
+    removed = len(ov) - len(keep)
+    if not removed:
+        print(f"🐈 no warn override matched {matcher!r}. See `warn ls` (built-ins can't be removed).")
+        return 1
+    _write_warn_overrides(keep)
+    print(f"✓ removed {removed} warn override(s)  ({len(WARN_DEFAULTS) + len(keep)} entries left)")
+    return 0
+
+
+def cmd_warn(args) -> int:
+    """Manage the soft warnlist tier. Verbs: ls / add / rm / test. A bare arg is
+    `test` (add needs --reason/--escape, so it can't be inferred from a phrase)."""
+    tokens = list(args.rest or [])
+    verbs = {"ls", "add", "rm", "test"}
+    if tokens and tokens[0] in verbs:
+        verb, rest = tokens[0], tokens[1:]
+    else:
+        verb, rest = "test", tokens
+    arg = " ".join(rest).strip()
+    if verb == "ls":
+        return _warn_ls(args.json)
+    if verb == "rm":
+        return _warn_rm(arg)
+    if verb == "add":
+        return _warn_add(arg, args.reason, args.escape, args.yes, args.regex)
+    return _warn_test(arg, args.json)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="kittens", description=__doc__)
     p.add_argument("--session", help="session id (else CLAUDE_CODE_SESSION_ID / hook stdin)")
@@ -860,6 +1121,15 @@ def main() -> int:
     s.add_argument("--regex", action="store_true", help="treat an added phrase as a regex, not a literal")
     s.add_argument("--json", action="store_true", help="machine-readable output (ls/test)")
     s.set_defaults(fn=cmd_blame)
+
+    s = sub.add_parser("warn", help="manage the soft warnlist tier: ls/add/rm/test (bare = test)")
+    s.add_argument("rest", nargs="*", help="a verb (ls/add/rm/test) + args, or bare text to test")
+    s.add_argument("--reason", default="", help="warn add: why this reads as a tell")
+    s.add_argument("--escape", default="", help="warn add: when it's fine (prose the model self-judges)")
+    s.add_argument("--yes", action="store_true", help="warn add: actually write; PREVIEW-ONLY without it")
+    s.add_argument("--regex", action="store_true", help="warn add: treat matcher as a regex, not a literal")
+    s.add_argument("--json", action="store_true", help="machine-readable output (ls/test)")
+    s.set_defaults(fn=cmd_warn)
 
     s = sub.add_parser("zen", help="print the Zen of Kittens")
     s.set_defaults(fn=cmd_zen)

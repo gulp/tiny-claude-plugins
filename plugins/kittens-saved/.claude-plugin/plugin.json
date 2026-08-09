@@ -1,7 +1,7 @@
 {
   "name": "kittens-saved",
-  "version": "0.3.0",
-  "description": "Counts the kittens you save by doing the work instead of punting it, and gates the agent's escape hatch: you may only stop cleanly when nothing of yours is left unsaved. An EVIDENCE-GATED Stop-hook nudge that fires only when THIS turn's message trips a lazy-handoff denylist (bounded-wait so it reads the current turn, not the previous), a human-gated pass-style `blame` grammar (ls/add/rm/edit/test; add is preview-only without --yes) to grow the denylist, a startup primer with the Zen of Kittens, a JSONL ledger, ops commands (status/stats/doctor/config), and a statusline segment.",
+  "version": "0.4.0",
+  "description": "Counts the kittens you save by doing the work instead of punting it, and gates the agent's escape hatch: you may only stop cleanly when nothing of yours is left unsaved. A TWO-TIER, evidence-gated Stop hook that reads THIS turn's message (bounded-wait, so the current turn not the previous) with context-aware matching that ignores code/quotes/blockquotes: a high-confidence DENYLIST fires an act-now nudge (grow it with the human-gated `blame` grammar), and a soft WARNLIST fires a gentle [i] reminder carrying a reason and an escape-condition, capped per session (grow it with `warn`). Plus a startup primer with the Zen of Kittens, a JSONL ledger, ops commands (status/stats/doctor/config), and a statusline segment.",
   "author": {
     "name": "Yekta Gurel",
     "email": "me@yektagurel.com"
@@ -25,6 +25,18 @@
       "title": "Debug",
       "description": "When true, the hooks echo the content they inject to stderr, prefixed [kittens-saved-debug], so you can see the reminder in the transcript / claude --debug without decoding the hook JSON.",
       "default": "false"
+    },
+    "strip_quotes": {
+      "type": "string",
+      "title": "Strip quotes before matching",
+      "description": "When true (default), the Stop-hook denylist ignores phrases inside double-quoted spans (as well as code and blockquotes), so a quoted meta-mention of a tell does not trip it. Set false to match quoted spans too.",
+      "default": "true"
+    },
+    "warn_repeat": {
+      "type": "string",
+      "title": "Warn repeat cap",
+      "description": "How many times a single warnlist matcher may fire per session before it goes quiet: 0 disables the soft warn tier, 1 is once-only, 2 (default) reinforces once. Keeps the [i] reminders gentle rather than naggy.",
+      "default": "2"
     }
   }
 }
