@@ -8,7 +8,7 @@ description: >
 license: MIT
 metadata:
   author: gulp
-  version: "0.1.0"
+  version: "0.1.1"
 allowed-tools:
   - Bash(python3 *)
   - Read
@@ -23,9 +23,11 @@ a broken command.**
 What it checks (the suite convention: doctor for presence, files for
 seams — never imports):
 
-- **engine** — `ultraloop` on PATH (a legacy `ralph` binary counts, with a
-  rename-pending note) and its version. Missing engine → the expiry path
-  ends at a saved record; the skills never fall back to an inline loop.
+- **engine** — `ultraloop` on PATH and its version. A bare `ralph` binary
+  is a WARN, not a pass: a dozen third-party tools ship that name and the
+  rename cascade has landed, so it is presumptively not the engine.
+  Missing engine → the expiry path ends at a saved record; the skills
+  never fall back to an inline loop.
 - **seam** — `.claude/ultra/escalations/` record count and the newest
   record's age. A week-old escalation nobody picked up is the seam's one
   silent failure mode; this is where it becomes loud.

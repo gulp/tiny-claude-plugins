@@ -11,7 +11,7 @@ description: >
 license: MIT
 metadata:
   author: gulp
-  version: "0.1.0"
+  version: "0.1.1"
 allowed-tools:
   - Bash(python3 *)
   - Read
@@ -61,8 +61,13 @@ Run `"${CLAUDE_PLUGIN_ROOT}/scripts/ultraralph-doctor.sh"`. Engine missing
 inline loop: an unconfined brute-force loop is exactly what the engine's
 sandbox exists to prevent.
 
-**Success criteria**: `ultraloop` (or legacy `ralph`) confirmed on PATH, or
-the run ended at the doctor's install line.
+If the doctor warns that only a `ralph` binary is on PATH, treat it as
+**not the engine**: a dozen third-party tools ship that name (destiny
+ruling 1) and the ultraloop rename has landed. Surface the warning and
+stop — never exec an unverified `ralph`.
+
+**Success criteria**: `ultraloop` confirmed on PATH, or the run ended at
+the doctor's install line / third-party warning.
 
 ### 4. Bed adoption — adopt-if-present (destiny ruling 5)
 

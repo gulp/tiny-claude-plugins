@@ -41,13 +41,15 @@ elif command -v ralph >/dev/null 2>&1; then
 fi
 if [ -z "$ENGINE" ]; then
   warn "engine missing — neither ultraloop nor ralph on PATH. Install: clone the engine repo (~/src/ultraloop) and put its bin/ on PATH. Without it the expiry path ends at a saved record."
+elif [ "$ENGINE" = "ralph" ]; then
+  # A dozen third-party tools ship a `ralph` binary (destiny ruling 1), and
+  # the ultraloop rename cascade has landed — a bare `ralph` on PATH is
+  # presumptively NOT the engine. Never treat it as one unverified.
+  VER=$(ralph --version 2>/dev/null | head -1)
+  warn "engine: only a \`ralph\` binary on PATH${VER:+ ($VER)} — likely a third-party ralph tool, not the ultraloop engine (rename cascade landed; docs/design/ultraralph-ultraloop-destiny.md rulings 1-2). Verify its provenance before using it, or install ultraloop (~/src/ultraloop)."
 else
-  VER=$("$ENGINE" --version 2>/dev/null | head -1)
-  if [ "$ENGINE" = "ralph" ]; then
-    ok "engine: ralph on PATH${VER:+ ($VER)} — legacy name; ultraloop rename cascade not yet landed (docs/design/ultraralph-ultraloop-destiny.md ruling 2)"
-  else
-    ok "engine: ultraloop on PATH${VER:+ ($VER)}"
-  fi
+  VER=$(ultraloop --version 2>/dev/null | head -1)
+  ok "engine: ultraloop on PATH${VER:+ ($VER)}"
 fi
 
 SEAM="$PROJ/.claude/ultra/escalations"

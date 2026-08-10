@@ -50,7 +50,12 @@ except Exception: d = {}
 print(d.get('$1') or '')" 2>/dev/null
 }
 
-field() { python3 -c "import json,sys;print(json.load(open('$STATE')).get('$1',''))" 2>/dev/null; }
+field() {
+  # A null value must print as empty, not "None" — "None" reaching an
+  # arithmetic context under set -u kills the hook with exit 1, which the
+  # harness reads as a non-blocking error: enforcement silently disarms.
+  python3 -c "import json;v=json.load(open('$STATE')).get('$1');print('' if v is None else v)" 2>/dev/null
+}
 setfield() {
   # Atomic: a mid-write crash must not corrupt state.json — a corrupted state
   # silently disarms the goal (seam design decision 6).

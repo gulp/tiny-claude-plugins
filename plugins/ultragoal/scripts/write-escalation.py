@@ -162,21 +162,21 @@ def main():
     }
 
     os.makedirs(out_dir, exist_ok=True)
-    if os.path.exists(out_path):
-        print(f"write-escalation: refusing to overwrite existing record: {out_path}",
-              file=sys.stderr)
-        return 1
-
     fd, tmp = tempfile.mkstemp(prefix=".escalation-", suffix=".tmp", dir=out_dir)
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(record, f, indent=2)
             f.write("\n")
-        os.replace(tmp, out_path)
-    except Exception:
+        # link, not replace: atomic no-clobber, so two writers racing on the
+        # same stamp cannot silently overwrite the first record.
+        os.link(tmp, out_path)
+    except FileExistsError:
+        print(f"write-escalation: refusing to overwrite existing record: {out_path}",
+              file=sys.stderr)
+        return 1
+    finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-        raise
 
     print(out_path)
     return 0

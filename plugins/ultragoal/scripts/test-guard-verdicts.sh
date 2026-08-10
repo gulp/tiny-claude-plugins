@@ -166,11 +166,48 @@ REC=$(rec_of "$D"); [ -n "$REC" ] || fail "tokens: no record at cap"
 [ "$(jget "$REC" spend.tokens.output)" = "150" ] || fail "tokens: output sum wrong"
 [ "$(jget "$REC" spend.tokens.input)" = "15" ] || fail "tokens: input sum wrong"
 [ "$(jget "$REC" spend.tokens.cache_read)" = "1000" ] || fail "tokens: cache_read sum wrong"
+[ "$(jget "$REC" spend.tokens.cache_creation)" = "0" ] || fail "tokens: absent cache_creation should sum to 0, not null"
 # Absent transcript -> tokens stays null, never a fabricated zero.
 D="$WORK/notokens"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 8 8 9999999999 "$(hash_of "$D")"
 echo '{}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>/dev/null
 REC=$(rec_of "$D"); [ -n "$REC" ] || fail "notokens: no record at cap"
 [ "$(jget "$REC" spend.tokens)" = "null" ] || fail "notokens: tokens should be null without a transcript"
+
+# Armed but rubric.json missing -> stand down incomplete, no record, allow stop.
+D="$WORK/norubric"; mkdir -p "$D"; mk_rubric "$D" "true"; mk_state "$D" armed 0 8 9999999999 "$(hash_of "$D")"
+rm "$D/rubric.json"
+echo '{}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>"$D/err"; rc=$?
+[ $rc -eq 0 ] || fail "norubric: expected exit 0, got $rc"
+grep -q '"status": "incomplete"' "$D/state.json" || fail "norubric: status not incomplete"
+grep -q 'standing down' "$D/err" || fail "norubric: no stand-down message"
+[ -z "$(rec_of "$D")" ] || fail "norubric: missing-rubric path wrote a record"
+
+# Null-valued state fields must not kill the hook (exit 1 = silent disarm):
+# a null stop_attempts/deadline still enforces and counts the attempt.
+D="$WORK/nullfields"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 0 8 9999999999 "$(hash_of "$D")"
+python3 - "$D" <<'PYEOF'
+import json, sys
+d = sys.argv[1]
+s = json.load(open(d+"/state.json"))
+s["stop_attempts"] = None; s["deadline_epoch"] = None; s["max_stop_attempts"] = None
+json.dump(s, open(d+"/state.json","w"))
+PYEOF
+echo '{}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>"$D/err"; rc=$?
+[ $rc -eq 2 ] || fail "nullfields: expected exit 2 (enforce), got $rc — null fields disarmed the guard"
+grep -q '"stop_attempts": 1' "$D/state.json" || fail "nullfields: attempt not counted from null baseline"
+
+# Record-writer race: two concurrent writers, same stamp -> exactly one wins,
+# the other refuses, no clobber, no temp residue.
+D="$WORK/race"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 8 8 9999999999 "$(hash_of "$D")"
+python3 "$HERE/write-escalation.py" --state-dir "$D" --project-dir "$D" \
+  --cause deadline --stamp 20990101T000000Z >/dev/null 2>&1 &
+python3 "$HERE/write-escalation.py" --state-dir "$D" --project-dir "$D" \
+  --cause attempt_cap --stamp 20990101T000000Z >/dev/null 2>&1 &
+wait
+N=$(ls "$D"/.claude/ultra/escalations/*.json 2>/dev/null | wc -l)
+[ "$N" = "1" ] || fail "race: expected exactly 1 record, got $N"
+python3 -c "import json,sys;json.load(open(sys.argv[1]))" "$(rec_of "$D")" || fail "race: surviving record is not valid JSON"
+ls "$D"/.claude/ultra/escalations/.escalation-* 2>/dev/null && fail "race: temp residue left"
 
 # --- doctor smoke -------------------------------------------------------------
 DOCTOR="$HERE/goal-doctor.sh"
@@ -190,6 +227,17 @@ D="$WORK/doc-sick"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 0
 grep -q 'hash mismatch' "$D/out" || fail "doctor-sick: no hash-mismatch finding"
 grep -q 'never fired' "$D/out" || fail "doctor-sick: no liveness finding"
 "$DOCTOR" --state-dir "$WORK/does-not-exist" >/dev/null 2>&1 || fail "doctor-nogoal: no goal should be exit 0"
+# Conscript warning: state without session_id -> exit 1 with the shared-budget finding.
+D="$WORK/doc-conscript"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 1 8 9999999999 "$(hash_of "$D")"
+python3 - "$D" <<'PYEOF'
+import json, sys
+d = sys.argv[1]
+s = json.load(open(d+"/state.json")); s["last_fired_at"] = "2026-01-01T00:00:00Z"
+json.dump(s, open(d+"/state.json","w"))
+PYEOF
+"$DOCTOR" --state-dir "$D" --session-id sessX >"$D/out" 2>&1; rc=$?
+[ $rc -eq 1 ] || fail "doctor-conscript: expected exit 1, got $rc"
+grep -q 'conscripted' "$D/out" || fail "doctor-conscript: no conscript finding"
 
 echo "all verdicts + escalation-record + multi-session + doctor matrix proven"
 exit 0
