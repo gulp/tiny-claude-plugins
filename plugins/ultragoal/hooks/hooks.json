@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/goal-stop-guard.sh\"",
-            "timeout": 120,
+            "timeout": 600,
             "statusMessage": "ultragoal: checking rubric"
           }
         ]
