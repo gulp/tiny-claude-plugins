@@ -1,6 +1,6 @@
 {
   "name": "ultragoal",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Turn a written plan into a self-enforcing run: compiles the plan's acceptance criteria into a machine-checkable rubric, then a Stop hook blocks the session from stopping until every check passes on disk \u2014 feeding failing checks back as the next marching order. Hash-pinned judge, bounded enforcement, human escape verb. After Karpathy's autoresearch recipe: start --iterate N re-arms on each certified DONE.",
   "author": {
     "name": "Yekta Gurel",

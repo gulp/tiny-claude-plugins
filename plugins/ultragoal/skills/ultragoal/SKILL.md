@@ -7,13 +7,12 @@ description: >
   hold on disk. Compiles the plan's acceptance criteria into a
   machine-checkable rubric (after Karpathy's autoresearch recipe), arms a
   state file, and the plugin's Stop hook blocks stopping until every check
-  passes — feeding failing checks back as the next marching order. Also:
-  "status" reports the active goal, "doctor" is the health check, "bypass"
-  is the human key around the gate.
+  passes — feeding failing checks back as the next marching order.
+  Reporting lives in the sibling status skill, the human key in bypass.
 license: MIT
 metadata:
   author: gulp
-  version: "0.4.0"
+  version: "0.5.0"
 allowed-tools:
   - Bash(python3 *)
   - Bash(sha256sum *)
@@ -39,20 +38,9 @@ append-only `attempts.jsonl` blocked-stop ledger) — gitignore it, along with
   Optional `--escalate` → `"escalate": true` in state.json: on expiry the
   escalation record is marked for pickup by an installed ultraralph rung
   (default false — the record still gets written, just not auto-consumed).
-- `status`: report state.json (status, pass/fail counts via rubric-check).
-  **Hook-liveness warning**: armed + `last_fired_at` absent means the guard
-  has not fired this session — if the plugin was installed after this
-  session started, the hook set predates it; restart the session before
-  trusting enforcement. (Empty `attempts.jsonl` beside an armed state is the
-  same signal at postmortem time.) Also say whose goal it is: state.json's
-  `session_id` vs `$CLAUDE_CODE_SESSION_ID`.
-- `doctor`: run
-  `"${CLAUDE_PLUGIN_ROOT}/scripts/goal-doctor.sh"` and print its output
-  verbatim — state, ownership, judge pin, hook liveness, budget, and a fresh
-  rubric run. Exit 1 means it found issues (that is the finding, not a
-  broken command); read-only, never repairs.
-- `bypass`: set `status: bypassed` in state.json — the human key around the
-  gate; the guard stands down and the audit trail reads "bypassed".
+Sibling skills own the other verbs — route there, don't inline them here:
+`status` (quick read + `doctor` health report, both read-only) and `bypass`
+(the human key around the gate; never invoke it on your own initiative).
 
 ## Steps
 
