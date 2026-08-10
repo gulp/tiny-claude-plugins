@@ -13,7 +13,7 @@ description: >
 license: MIT
 metadata:
   author: gulp
-  version: "0.2.0"
+  version: "0.3.0"
 allowed-tools:
   - Bash(python3 *)
   - Bash(sha256sum *)

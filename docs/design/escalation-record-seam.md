@@ -61,6 +61,7 @@ an existing field bumps `record_version`.
 
   "attempts": [
     { "at": "2026-08-10T17:10:00Z",
+      "blocked": "rubric",
       "failing": ["check-id", "…"],
       "workspace": "sha256 of `git rev-parse HEAD` + `git status --porcelain`" }
   ],
@@ -95,6 +96,14 @@ Field rulings, each load-bearing:
 - **`expiry_cause` is `"deadline"` or `"attempt_cap"`** — the two arrows the
   CLOCK owns. Nothing else may write a record: `satisfied`, `bypassed`, and
   `tampered` are terminal where they stand and escalate nothing.
+- **`attempts[].blocked` names which gate consumed the attempt**: `"rubric"`
+  (checks failing) or `"dirty_tree"` (rubric passing but commit-before-certify
+  refused to certify an uncommitted tree). A `dirty_tree` entry legitimately
+  carries `failing: []` — without the field that entry would read as "all
+  passed, blocked anyway". The distinction is the postmortem's first question:
+  did the cap burn on wrong work or on an unswept tree? (Flagged as the top
+  risk by the first dogfood run — an always-dirty vault burns attempts on
+  `dirty_tree` alone.)
 - **`attempts[].workspace` is the don't-rerun key** (imported from
   prime-agent, read 2026-08-09): a downstream rung facing the same failing
   checks on an unchanged workspace hash skips straight to work — re-running
@@ -120,12 +129,20 @@ Field rulings, each load-bearing:
 
 On the expiry verdict, after setting `status: incomplete` in state.json:
 
-1. Build the record from state.json + rubric.json + the attempt ledger it
-   has been appending per blocked stop (this note obliges the guard to keep
-   that ledger — today it keeps only a counter; the `attempts` array is the
-   one schema-driven change to ultragoal's own state).
-2. Write atomically to the seam path; `mkdir -p` the directory.
-3. Print one line naming the path and — when not auto-escalating — the
+1. Build the record from state.json + rubric.json + the attempt ledger the
+   guard appends per blocked stop (this note obliges the guard to keep that
+   ledger — today it keeps only a counter). The ledger lives as
+   `attempts.jsonl` in the state dir — append-only, one JSON object per
+   blocked stop — **not** as an array inside state.json: a `>>` append is
+   crash-safe by construction (a torn last line is detectable and
+   droppable), while growing an array through a whole-file JSON rewrite puts
+   the corruption risk exactly where the goal's arming state lives.
+2. Append one final ledger entry at expiry time from a fresh judge run —
+   both expiry paths already re-run the rubric for the human table, so the
+   machine JSON is free — then the record's last `attempts[]` element
+   describes the workspace at expiry, not at the last stop attempt.
+3. Write atomically to the seam path; `mkdir -p` the directory.
+4. Print one line naming the path and — when not auto-escalating — the
    `handoff.suggested` command verbatim.
 
 The record is written **only** on expiry. It is not a checkpoint format, not

@@ -7,3 +7,13 @@
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# per-session / per-project plugin state — working state, never history
+# (dumbzone context ledger, kittens-saved session ledger, ultragoal armed-goal
+# state incl. attempts.jsonl, and the escalation-record seam dir — see
+# docs/design/escalation-record-seam.md)
+.claude/.dumbzone/
+.claude/.kittens-saved/
+.claude/.ultragoal/
+.claude/ultra/
+plugins/*/.claude/
