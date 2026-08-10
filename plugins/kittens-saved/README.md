@@ -43,18 +43,23 @@ Per-session mute (independent of `enabled`): `/kittens toggle off`.
 
 ## Statusline wiring
 
-Statuslines are a settings, not a plugin component. Add to `~/.claude/settings.json`:
+Statuslines are a settings key, not a plugin component — so the plugin ships a
+**chip installer**: `/kittens statusline install` (preview first; `--yes`
+writes after you confirm). It installs a *chip*, never a takeover:
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "bash \"${CLAUDE_PLUGIN_ROOT}/statusline/kittens-segment.sh\""
-  }
-}
-```
+- **vacant slot** → creates a small wrapper script and points `statusLine` at it;
+- **existing statusline** → the wrapper runs *your* command first (runtime
+  delegation, recursion-guarded) and adds the 🐈 line after it — your prior
+  value is ledgered and `statusline rm` restores it exactly;
+- **ccstatusline detected** → injects a `custom-command` widget into its own
+  config instead (your widgets are never touched).
 
-(Compose it with your existing statusline command if you already have one.)
+`statusline status` shows per-scope wiring and which scope wins for this cwd;
+`statusline render` executes the result once so you can see it before trusting
+it. Installed bytes resolve the segment at runtime (newest plugin version
+wins), so updates never strand the wiring. What it does under the hood is
+exactly the manual recipe: point `statusLine.command` at
+`statusline/kittens-segment.sh`, composed with whatever you already had.
 
 ## Install
 

@@ -58,6 +58,25 @@ Silences the Stop-hook reminder and the statusline segment for **this session
 only** (a marker file next to the session ledger); the ledger keeps recording.
 To disable the plugin everywhere, change the `enabled` plugin setting instead.
 
+## `statusline …` — chip installer (preview-default, HUMAN-GATED writes)
+
+Wire the 🐈 segment into the statusline without taking it over. Verbs:
+
+| form | does |
+|---|---|
+| `statusline status [--json]` | per-scope wiring table + which scope wins for this cwd (exit 1 on MODIFIED/STALE/DEGRADED) |
+| `statusline render [--scope …]` | run the effective statusline once with synthetic stdin; prints what would render |
+| `statusline install [--scope user\|project\|local]` | **preview** the route (vacant/wrap/rail) and exact writes; `--yes` applies |
+| `statusline rm [--scope …] [--force-modified]` | **preview** the inverse (excise + restore displaced value); `--yes` applies |
+
+**The gate — `install`/`rm` NEVER write blind.** Without `--yes` they compute
+everything and write nothing. Run the preview, show its output (route, files,
+displaced value, scope caveats), confirm with **`AskUserQuestion`**, then
+re-run with `--yes`. On exit 4 (refused/raced) re-run the whole
+preview→confirm→`--yes` cycle at most once; exit 3 names a condition a rerun
+cannot fix — report it. Never edit the wrapper's fenced body by hand-editing
+tools; MODIFIED refusals route through `rm --force-modified`.
+
 ## `blame …` — the denylist (high-confidence punt phrases)
 
 | form | does |

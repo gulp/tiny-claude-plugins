@@ -27,11 +27,15 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import glob as _glob
+import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
+import tempfile
 import time
 
 REMINDER = (
@@ -776,6 +780,16 @@ def cmd_doctor(args) -> int:
     if _is_off(session):
         findings.append(("info", f"enforcement toggled OFF for session {session}", False))
 
+    # Read-only statusline wiring check — repairs flow ONLY through the
+    # preview→confirm→--yes path of `statusline install/rm`, never --fix.
+    sl_reports = [_sl_scope_report(s) for s in ("user", "project", "local")]
+    sl_bad = [r for r in sl_reports if r["state"] in ("MODIFIED", "STALE", "DEGRADED", "ERROR")]
+    if sl_bad:
+        for r in sl_bad:
+            findings.append(("warn", f"statusline {r['scope']}: {r['state']} — {r['detail']}", False))
+    elif all(r["state"] == "ABSENT" for r in sl_reports):
+        findings.append(("info", "statusline chip not wired — `kittens statusline install` to see it", False))
+
     t = _tally(_read(session))
     if args.json:
         print(json.dumps({
@@ -1068,6 +1082,523 @@ def cmd_warn(args) -> int:
     return _warn_test(arg, args.json)
 
 
+# ---------------------------------------------------------------------------
+# statusline chip installer — routes×states per docs/plans/kittens-statusline-
+# installer.md (Rev 2). Invariants: never edit a file the installer did not
+# create; preview is the default (--yes writes); displacement is ledgered
+# before every settings change; fail open at render time, loud at inspect time.
+
+_SL_FENCE_OPEN_TPL = "# >>> kittens-saved statusline v1 hash={h} >>>"
+_SL_FENCE_OPEN_RE = re.compile(r"^# >>> kittens-saved statusline v1 hash=([0-9a-f]{16}) >>>$")
+_SL_FENCE_CLOSE = "# <<< kittens-saved statusline <<<"
+_SL_SEG_GLOB = ".claude/plugins/cache/*/kittens-saved/*/statusline/kittens-segment.sh"
+_SL_RAIL_MARK = "kittens-segment.sh"   # our widget is recognized by this in commandPath
+_SL_RAIL_IDS = ("kittens-saved-sep", "kittens-saved-chip")
+_SL_SCOPES = ("local", "project", "user")  # precedence order, highest first
+_SL_PRE_WRITE_HOOK = None  # test seam: called with the path before each guarded write
+
+
+class _SLEnv(Exception):
+    """Environment failure — exit 3. args: (what, remedy)."""
+
+
+class _SLRefused(Exception):
+    """Refused action — exit 4. args: (what, remedy)."""
+
+
+def _sl_fail(tag: str, what: str, remedy: str) -> None:
+    print(f"[{tag}] {what}")
+    print(f"    → {remedy}")
+
+
+def _sl_home() -> str:
+    return os.path.expanduser("~")
+
+
+def _sl_paths(scope: str) -> dict:
+    home, proj = _sl_home(), _project_dir()
+    if scope == "user":
+        return {"settings": os.path.join(home, ".claude", "settings.json"),
+                "wrapper": os.path.join(home, ".claude", "kittens-statusline.sh"),
+                "ledger": os.path.join(home, ".claude", ".kittens-saved", "statusline-user.json")}
+    if scope == "project":
+        return {"settings": os.path.join(proj, ".claude", "settings.json"),
+                "wrapper": os.path.join(proj, ".claude", "kittens-statusline.sh"),
+                "ledger": os.path.join(_state_dir(), "statusline-project.json")}
+    return {"settings": os.path.join(proj, ".claude", "settings.local.json"),
+            "wrapper": os.path.join(proj, ".claude", "kittens-statusline.local.sh"),
+            "ledger": os.path.join(_state_dir(), "statusline-local.json")}
+
+
+def _sl_rail_path() -> str:
+    return os.path.join(_sl_home(), ".config", "ccstatusline", "settings.json")
+
+
+def _sl_hash(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def _sl_seg_resolved() -> str | None:
+    hits = sorted(_glob.glob(os.path.join(_sl_home(), _SL_SEG_GLOB)))
+    return hits[-1] if hits else None
+
+
+def _sl_block_body(ledger_path: str, delegate: bool) -> str:
+    """The fenced chip body. Delegation (route W) executes the ledgered displaced
+    command at runtime under a recursion guard; the chip renders on its own line."""
+    lines = []
+    if delegate:
+        lines += [
+            'if [ "${KITTENS_SL_CHILD:-}" != "1" ]; then',
+            f"""  prev=$(jq -r '.displaced.command // empty' "{ledger_path}" 2>/dev/null)""",
+            '  if [ -n "$prev" ]; then',
+            """    printf '%s' "$input" | KITTENS_SL_CHILD=1 bash -c "$prev" 2>/dev/null || true""",
+            '  fi',
+            'fi',
+        ]
+    lines += [
+        f'seg=$(ls -d "$HOME"/{_SL_SEG_GLOB} 2>/dev/null | sort -V | tail -1)',
+        """if [ -n "$seg" ]; then printf '%s' "$input" | bash "$seg" 2>/dev/null || true; fi""",
+    ]
+    return "\n".join(lines)
+
+
+def _sl_wrapper_text(body: str) -> str:
+    return ("#!/usr/bin/env bash\n"
+            "# kittens-saved statusline wrapper — managed by `kittens statusline`.\n"
+            "# Edit outside the fences only; the fenced body is hash-guarded.\n"
+            'input=$(cat 2>/dev/null || true)\n'
+            f"{_SL_FENCE_OPEN_TPL.format(h=_sl_hash(body))}\n"
+            f"{body}\n"
+            f"{_SL_FENCE_CLOSE}\n")
+
+
+_SL_HUSK = ("#!/usr/bin/env bash\n"
+            "# kittens-saved statusline wrapper — removed by `kittens statusline rm`.\n"
+            "# Inert husk (agents cannot delete files here); safe to delete by hand.\n")
+
+
+def _sl_parse_wrapper(text: str):
+    """→ (state, body, (open_idx, close_idx)) over splitlines(); state is
+    'fresh' (no fences), 'converged' (hash ok) or 'modified'."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = _SL_FENCE_OPEN_RE.match(line)
+        if not m:
+            continue
+        for j in range(i + 1, len(lines)):
+            if lines[j] == _SL_FENCE_CLOSE:
+                body = "\n".join(lines[i + 1:j])
+                state = "converged" if _sl_hash(body) == m.group(1) else "modified"
+                return state, body, (i, j)
+        return "modified", "\n".join(lines[i + 1:]), (i, len(lines) - 1)
+    return "fresh", None, None
+
+
+def _sl_read_json(path: str):
+    """→ (obj, raw). Missing file → ({}, None). Unparseable or non-object top
+    level → _SLEnv (corrupt JSON is never treated as empty)."""
+    if not os.path.exists(path):
+        return {}, None
+    with open(path, encoding="utf-8") as fh:
+        raw = fh.read()
+    try:
+        obj = json.loads(raw)
+    except ValueError as exc:
+        raise _SLEnv(f"{path} is not valid JSON ({exc})",
+                     "fix the file by hand; the installer never repairs JSON") from exc
+    if not isinstance(obj, dict):
+        raise _SLEnv(f"{path} top level is not an object",
+                     "fix the file by hand; the installer never repairs JSON")
+    return obj, raw
+
+
+def _sl_read_text(path: str) -> str | None:
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _sl_guarded_write(path: str, data: str, snapshot: str | None, mode: int | None = None) -> None:
+    """Atomic write refusing to clobber a target that changed since compute time."""
+    if _SL_PRE_WRITE_HOOK:
+        _SL_PRE_WRITE_HOOK(path)
+    current = _sl_read_text(path)
+    if current != snapshot:
+        raise _SLRefused(f"{path} changed since preview/compute — nothing written",
+                         "re-run the command (preview → confirm → --yes)")
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".kittens-sl-")
+    try:
+        os.write(fd, data.encode("utf-8"))
+    finally:
+        os.close(fd)
+    if mode is not None:
+        os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def _sl_dangling_path(cmd: str) -> str | None:
+    """First path-looking token that doesn't exist → that token (route D).
+    Tokens after -c are inline code, never a script path."""
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        return None
+    for tok in toks:
+        if tok == "-c":
+            return None
+        if tok.startswith("-"):
+            continue
+        if "/" in tok or tok.startswith("~"):
+            p = os.path.expanduser(tok)
+            return None if os.path.exists(p) else tok
+    return None
+
+
+def _sl_route(scope: str, settings_obj: dict):
+    """→ (route, detail). Routes: OURS (already our wrapper), R (rail),
+    D (dangling), W (wrap occupied), V (vacant)."""
+    sl = settings_obj.get("statusLine")
+    if sl is None:
+        return "V", None
+    if not isinstance(sl, dict) or sl.get("type") != "command" or not isinstance(sl.get("command"), str):
+        raise _SLEnv(f"statusLine at scope {scope} has an unsupported shape: {sl!r}",
+                     "only type=command with a string command is understood; fix by hand")
+    cmd = sl["command"]
+    if _sl_paths(scope)["wrapper"] in cmd:
+        return "OURS", cmd
+    if "ccstatusline" in cmd and os.path.exists(_sl_rail_path()):
+        try:
+            _sl_read_json(_sl_rail_path())
+            return "R", cmd
+        except _SLEnv:
+            raise _SLEnv(f"rail config {_sl_rail_path()} does not parse",
+                         "fix ccstatusline's settings.json; the installer never repairs JSON")
+    dangling = _sl_dangling_path(cmd)
+    if dangling:
+        return "D", dangling
+    return "W", cmd
+
+
+def _sl_rail_widget_cmd() -> str:
+    inner = (f'seg=$(ls -d "$HOME"/{_SL_SEG_GLOB} 2>/dev/null | sort -V | tail -1); '
+             '[ -n "$seg" ] && exec bash "$seg"')
+    return f"bash -c '{inner}'"
+
+
+def _sl_write_ledger(paths: dict, payload: dict) -> None:
+    payload = {"version": 1, "written_at": _now(), **payload}
+    snapshot = _sl_read_text(paths["ledger"])
+    _sl_guarded_write(paths["ledger"], json.dumps(payload, indent=2) + "\n", snapshot)
+
+
+def _sl_scope_report(scope: str) -> dict:
+    """Read-only per-scope state for status/doctor."""
+    paths = _sl_paths(scope)
+    rep = {"scope": scope, "settings": paths["settings"], "state": "ABSENT",
+           "route": None, "target": None, "detail": ""}
+    try:
+        obj, raw = _sl_read_json(paths["settings"])
+    except _SLEnv as exc:
+        rep.update(state="ERROR", detail=str(exc.args[0]))
+        return rep
+    rep["present"] = raw is not None and "statusLine" in obj
+    try:
+        route, detail = _sl_route(scope, obj)
+    except _SLEnv as exc:
+        rep.update(state="ERROR", detail=str(exc.args[0]))
+        return rep
+    rep["route"] = route
+    if route == "OURS":
+        wtext = _sl_read_text(paths["wrapper"])
+        rep["target"] = paths["wrapper"]
+        if wtext is None:
+            rep.update(state="STALE", detail="settings point at our wrapper but it is missing")
+            return rep
+        state, _body, _span = _sl_parse_wrapper(wtext)
+        if state == "modified":
+            rep.update(state="MODIFIED", detail="wrapper fence body no longer matches its hash")
+            return rep
+        if state == "fresh":
+            rep.update(state="ABSENT", detail="wrapper exists but carries no fenced chip (husk)")
+            return rep
+        if _sl_seg_resolved() is None:
+            rep.update(state="STALE", detail="chip installed but no kittens-segment.sh resolvable in the plugin cache")
+            return rep
+        ledger, _ = ({}, None)
+        try:
+            ledger, _ = _sl_read_json(paths["ledger"])
+        except _SLEnv:
+            pass
+        displaced = (ledger or {}).get("displaced")
+        if displaced and _sl_dangling_path(str(displaced.get("command", ""))):
+            rep.update(state="DEGRADED", detail="delegated (displaced) command references a missing path")
+            return rep
+        rep.update(state="OK")
+        return rep
+    if route == "R":
+        try:
+            rail, _ = _sl_read_json(_sl_rail_path())
+        except _SLEnv as exc:
+            rep.update(state="ERROR", detail=str(exc.args[0]))
+            return rep
+        ours = [w for line in rail.get("lines", []) for w in line
+                if _SL_RAIL_MARK in str(w.get("commandPath", ""))]
+        rep["target"] = _sl_rail_path()
+        if ours:
+            rep.update(state="OK" if _sl_seg_resolved() else "STALE",
+                       detail="" if _sl_seg_resolved() else "widget installed but segment unresolvable")
+        return rep
+    return rep
+
+
+def _sl_winning_scope() -> str | None:
+    for scope in _SL_SCOPES:
+        try:
+            obj, raw = _sl_read_json(_sl_paths(scope)["settings"])
+        except _SLEnv:
+            continue
+        if raw is not None and "statusLine" in obj:
+            return scope
+    return None
+
+
+def _sl_status(as_json: bool) -> int:
+    reports = [_sl_scope_report(s) for s in ("user", "project", "local")]
+    winning = _sl_winning_scope()
+    bad = [r for r in reports if r["state"] in ("MODIFIED", "STALE", "DEGRADED", "ERROR")]
+    if as_json:
+        print(json.dumps({"scopes": reports, "winning_scope": winning}))
+    else:
+        print("🐈 statusline wiring")
+        for r in reports:
+            mark = " ← wins for this cwd" if r["scope"] == winning else ""
+            detail = f"  ({r['detail']})" if r["detail"] else ""
+            print(f"   {r['scope']:<8} {r['state']:<9} {r['settings']}{detail}{mark}")
+        if winning is None:
+            print("   (no scope defines statusLine — nothing renders)")
+    return 1 if bad else 0
+
+
+def _sl_render(scope: str | None) -> int:
+    scope = scope or _sl_winning_scope()
+    if scope is None:
+        _sl_fail("FAIL", "no scope defines statusLine — nothing to render",
+                 "run `kittens statusline install` first")
+        return 1
+    obj, _raw = _sl_read_json(_sl_paths(scope)["settings"])
+    sl = obj.get("statusLine") or {}
+    cmd = sl.get("command")
+    if not cmd:
+        _sl_fail("FAIL", f"scope {scope} has no statusLine command", "install first")
+        return 1
+    synthetic = json.dumps({
+        "session_id": "statusline-render-probe", "cwd": _project_dir(),
+        "model": {"id": "probe", "display_name": "probe"},
+        "workspace": {"current_dir": _project_dir(), "project_dir": _project_dir()},
+    })
+    proc = subprocess.run(["bash", "-c", cmd], input=synthetic, text=True,
+                          capture_output=True, timeout=30)
+    sys.stdout.write(proc.stdout if proc.stdout else "(statusline rendered no output)\n")
+    return 0
+
+
+def _sl_preview_caveats(scope: str) -> None:
+    winning = _sl_winning_scope()
+    if scope == "project":
+        print("   note: project scope writes a COMMITTED file — every clone of this repo gets it")
+    if winning is not None and winning != scope and _SL_SCOPES.index(winning) < _SL_SCOPES.index(scope):
+        print(f"   ⚠ scope {winning} currently wins for this cwd — a {scope}-scope install is INVISIBLE here until {winning}'s statusLine is removed")
+
+
+def _sl_install(scope: str, yes: bool) -> int:
+    paths = _sl_paths(scope)
+    obj, raw = _sl_read_json(paths["settings"])
+    route, detail = _sl_route(scope, obj)
+
+    if route == "OURS":
+        wtext = _sl_read_text(paths["wrapper"])
+        if wtext is None:
+            raise _SLEnv(f"settings point at {paths['wrapper']} but it is missing",
+                         "run `kittens statusline rm` then reinstall")
+        state, _body, _span = _sl_parse_wrapper(wtext)
+        if state == "converged":
+            print(f"✓ already installed at scope {scope} — nothing to do")
+            return 0
+        if state == "modified":
+            raise _SLRefused(f"wrapper {paths['wrapper']} fence body was edited (hash mismatch)",
+                             "run `kittens statusline rm --force-modified` then reinstall, or hand-repair")
+        # fresh husk: fall through and rebuild in place as route V/W below
+        route = "V" if (obj.get("statusLine") or {}).get("command", "").find(paths["wrapper"]) >= 0 else route
+
+    if route == "D":
+        raise _SLEnv(f"current statusLine references a missing path: {detail}",
+                     "fix or remove the dangling statusLine first — installing over it would bury the breakage")
+
+    if route == "R":
+        rail_path = _sl_rail_path()
+        rail, rail_raw = _sl_read_json(rail_path)
+        lines = rail.get("lines") or [[]]
+        ours = [w for line in lines for w in line if _SL_RAIL_MARK in str(w.get("commandPath", ""))]
+        if ours:
+            print(f"✓ already installed on the ccstatusline rail — nothing to do")
+            return 0
+        sep = {"id": _SL_RAIL_IDS[0], "type": "separator"}
+        chip = {"id": _SL_RAIL_IDS[1], "type": "custom-command", "commandPath": _sl_rail_widget_cmd()}
+        print(f"route R (rail): inject chip widget into {rail_path} line 1")
+        print(f"   + {chip['commandPath']}")
+        _sl_preview_caveats(scope)
+        if not yes:
+            print("preview only — nothing written. Re-run with --yes after confirmation.")
+            return 0
+        new_lines = [list(lines[0]) + [sep, chip], *lines[1:]]
+        _sl_write_ledger(paths, {"scope": scope, "route": "R", "widget_ids": list(_SL_RAIL_IDS)})
+        _sl_guarded_write(rail_path, json.dumps({**rail, "lines": new_lines}, indent=2) + "\n", rail_raw)
+        print(f"✓ installed (rail) — widget ids {', '.join(_SL_RAIL_IDS)}")
+        return 0
+
+    # V (vacant) or W (wrap occupied)
+    displaced = obj.get("statusLine") if route == "W" else None
+    body = _sl_block_body(paths["ledger"], delegate=route == "W")
+    wtext = _sl_wrapper_text(body)
+    new_obj = {**obj, "statusLine": {"type": "command", "command": f'bash "{paths["wrapper"]}"'}}
+    print(f"route {route} ({'wrap existing statusline via runtime delegation' if route == 'W' else 'vacant slot'}) at scope {scope}:")
+    print(f"   write wrapper  {paths['wrapper']}  (fence hash {_sl_hash(body)})")
+    print(f"   write ledger   {paths['ledger']}" + ("  (displaced command recorded)" if displaced else "  (created-key marker)"))
+    print(f"   set statusLine {paths['settings']}" + (f"  (was: {displaced.get('command')!r})" if displaced else ""))
+    _sl_preview_caveats(scope)
+    if not yes:
+        print("preview only — nothing written. Re-run with --yes after confirmation.")
+        return 0
+    wrapper_snapshot = _sl_read_text(paths["wrapper"])
+    _sl_write_ledger(paths, {"scope": scope, "route": route,
+                             "created_key": route == "V", "displaced": displaced,
+                             "wrapper": paths["wrapper"]})
+    _sl_guarded_write(paths["wrapper"], wtext, wrapper_snapshot, mode=0o755)
+    _sl_guarded_write(paths["settings"], json.dumps(new_obj, indent=2) + "\n", raw)
+    if scope == "local":
+        _sl_gitignore_local_wrapper(paths["wrapper"])
+    print(f"✓ installed at scope {scope} — verify with `kittens statusline render --scope {scope}`")
+    return 0
+
+
+def _sl_gitignore_local_wrapper(wrapper: str) -> None:
+    gi = os.path.join(_project_dir(), ".gitignore")
+    rel = os.path.relpath(wrapper, _project_dir())
+    existing = _sl_read_text(gi) or ""
+    if rel not in existing:
+        _sl_guarded_write(gi, existing + f"\n# kittens-saved local statusline wrapper\n{rel}\n",
+                          existing if existing else None)
+
+
+def _sl_rm(scope: str, yes: bool, force_modified: bool) -> int:
+    paths = _sl_paths(scope)
+    ledger, ledger_ok = {}, True
+    try:
+        ledger, _ = _sl_read_json(paths["ledger"])
+    except _SLEnv:
+        ledger_ok = False
+
+    # Rail removal (route recorded, or detectable by our commandPath mark).
+    if (ledger or {}).get("route") == "R" or (not ledger and os.path.exists(_sl_rail_path())):
+        try:
+            rail, rail_raw = _sl_read_json(_sl_rail_path())
+        except _SLEnv:
+            rail, rail_raw = None, None
+        if rail is not None:
+            ours_present = any(_SL_RAIL_MARK in str(w.get("commandPath", ""))
+                               for line in rail.get("lines", []) for w in line)
+            if ours_present:
+                print(f"remove our widget(s) from {_sl_rail_path()} (user widgets untouched)")
+                if not yes:
+                    print("preview only — nothing written. Re-run with --yes after confirmation.")
+                    return 0
+                new_lines = [[w for w in line
+                              if _SL_RAIL_MARK not in str(w.get("commandPath", ""))
+                              and w.get("id") not in _SL_RAIL_IDS]
+                             for line in rail.get("lines", [])]
+                _sl_guarded_write(_sl_rail_path(), json.dumps({**rail, "lines": new_lines}, indent=2) + "\n", rail_raw)
+                print("✓ rail widget removed")
+                return 0
+
+    wtext = _sl_read_text(paths["wrapper"])
+    obj, raw = _sl_read_json(paths["settings"])
+    wired_to_us = paths["wrapper"] in str((obj.get("statusLine") or {}).get("command", ""))
+    if wtext is None and not wired_to_us:
+        print("nothing to remove — no wrapper and settings do not point at us")
+        return 0
+
+    state = "fresh"
+    if wtext is not None:
+        state, _body, _span = _sl_parse_wrapper(wtext)
+        if state == "modified" and not force_modified:
+            raise _SLRefused(f"wrapper {paths['wrapper']} fence body was edited (hash mismatch)",
+                             "re-run with --force-modified to excise it anyway")
+
+    displaced = (ledger or {}).get("displaced")
+    created_key = (ledger or {}).get("created_key", False)
+    print(f"excise chip from {paths['wrapper']} (husk retained; delete by hand if wanted)")
+    if wired_to_us:
+        if displaced:
+            print(f"restore settings statusLine → {displaced.get('command')!r}")
+        elif created_key:
+            print(f"remove statusLine key from {paths['settings']} (we created it)")
+        elif not ledger_ok:
+            print("⚠ ledger unreadable — settings will NOT be restored (excise only)")
+        else:
+            print("no displacement ledgered — settings left untouched")
+    if not yes:
+        print("preview only — nothing written. Re-run with --yes after confirmation.")
+        return 0
+
+    if wtext is not None:
+        _sl_guarded_write(paths["wrapper"], _SL_HUSK, wtext, mode=0o755)
+    if wired_to_us:
+        if displaced:
+            new_obj = {**obj, "statusLine": displaced}
+            _sl_guarded_write(paths["settings"], json.dumps(new_obj, indent=2) + "\n", raw)
+        elif created_key:
+            new_obj = {k: v for k, v in obj.items() if k != "statusLine"}
+            _sl_guarded_write(paths["settings"], json.dumps(new_obj, indent=2) + "\n", raw)
+        elif not ledger_ok:
+            _sl_fail("REFUSED", f"ledger {paths['ledger']} unreadable — chip excised but settings NOT restored",
+                     "restore statusLine by hand (see any backup) or fix the ledger and re-run rm")
+            return 4
+    print("✓ removed")
+    return 0
+
+
+def cmd_statusline(args) -> int:
+    """Dispatch + exit-code contract: 0 ok/no-op, 1 findings, 2 usage,
+    3 environment, 4 refused. Owns its errors — the outer never-break-the-
+    session swallow must not turn installer failures into silent exit 0."""
+    verb = args.verb or "status"
+    try:
+        if verb == "status":
+            return _sl_status(args.json)
+        if verb == "render":
+            return _sl_render(args.scope)
+        scope = args.scope or "user"
+        if verb == "install":
+            return _sl_install(scope, args.yes)
+        if verb == "rm":
+            return _sl_rm(scope, args.yes, args.force_modified)
+        _sl_fail("FAIL", f"unknown statusline verb {verb!r}", "one of: status render install rm")
+        return 2
+    except _SLEnv as exc:
+        _sl_fail("FAIL", exc.args[0], exc.args[1] if len(exc.args) > 1 else "inspect and re-run")
+        return 3
+    except _SLRefused as exc:
+        _sl_fail("REFUSED", exc.args[0], exc.args[1] if len(exc.args) > 1 else "inspect and re-run")
+        return 4
+    except Exception as exc:  # noqa: BLE001 — contract: unexpected ⇒ loud exit 3, never silent 0
+        _sl_fail("FAIL", f"unexpected error: {exc!r}", "this is a bug in the installer; report it")
+        return 3
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="kittens", description=__doc__)
     p.add_argument("--session", help="session id (else CLAUDE_CODE_SESSION_ID / hook stdin)")
@@ -1130,6 +1661,19 @@ def main() -> int:
     s.add_argument("--regex", action="store_true", help="warn add: treat matcher as a regex, not a literal")
     s.add_argument("--json", action="store_true", help="machine-readable output (ls/test)")
     s.set_defaults(fn=cmd_warn)
+
+    s = sub.add_parser("statusline",
+                       help="statusline chip installer: status/render/install/rm (preview-default; --yes writes)")
+    s.add_argument("verb", nargs="?", default="status",
+                   choices=["status", "render", "install", "rm"])
+    s.add_argument("--scope", choices=["user", "project", "local"],
+                   help="settings scope (install/rm default: user; render default: winning scope)")
+    s.add_argument("--yes", action="store_true",
+                   help="actually write; install/rm are PREVIEW-ONLY without it")
+    s.add_argument("--force-modified", action="store_true",
+                   help="rm only: excise a hash-mismatched (hand-edited) fence body anyway")
+    s.add_argument("--json", action="store_true", help="machine-readable output (status)")
+    s.set_defaults(fn=cmd_statusline)
 
     s = sub.add_parser("zen", help="print the Zen of Kittens")
     s.set_defaults(fn=cmd_zen)
