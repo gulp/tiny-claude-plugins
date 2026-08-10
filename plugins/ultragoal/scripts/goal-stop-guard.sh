@@ -39,9 +39,16 @@ done
 
 STATE="$STATE_DIR/state.json"
 RUBRIC="$STATE_DIR/rubric.json"
-cat >/dev/null 2>&1 || true   # drain hook stdin
+HOOK_STDIN=$(cat 2>/dev/null || true)
 
 [ -f "$STATE" ] || exit 0
+
+hook_field() {
+  printf '%s' "$HOOK_STDIN" | python3 -c "import json,sys
+try: d = json.load(sys.stdin)
+except Exception: d = {}
+print(d.get('$1') or '')" 2>/dev/null
+}
 
 field() { python3 -c "import json,sys;print(json.load(open('$STATE')).get('$1',''))" 2>/dev/null; }
 setfield() {
@@ -89,8 +96,10 @@ PYEOF
 }
 write_record() {
   # Expiry only. Writer failure must not change the verdict.
+  TRANSCRIPT=$(hook_field transcript_path)
   REC=$(python3 "$(dirname "$0")/write-escalation.py" --state-dir "$STATE_DIR" \
-        --cause "$1" --project-dir "${CLAUDE_PROJECT_DIR:-.}") || {
+        --cause "$1" --project-dir "${CLAUDE_PROJECT_DIR:-.}" \
+        ${TRANSCRIPT:+--transcript "$TRANSCRIPT"}) || {
     echo "ultragoal: escalation record could not be written — verdict unaffected" >&2
     return 0
   }
@@ -102,6 +111,17 @@ write_record() {
 
 STATUS=$(field status)
 [ "$STATUS" = "armed" ] || exit 0
+# Multi-session guard (docs/design/ultragoal-multi-session-guard.md): the goal
+# belongs to the session that armed it. A bystander session sharing the
+# project dir must not burn the attempt budget or stamp the heartbeat.
+# Back-compat: state without session_id (armed pre-0.4.0) conscripts everyone.
+OWNER=$(field session_id)
+if [ -n "$OWNER" ]; then
+  CALLER=$(hook_field session_id)
+  if [ -n "$CALLER" ] && [ "$CALLER" != "$OWNER" ]; then
+    exit 0
+  fi
+fi
 # Heartbeat (design decision 8): every armed invocation leaves proof the hook
 # ran — "armed + never fired" is the detached-hook failure mode made loud.
 setfield last_fired_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

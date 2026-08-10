@@ -8,12 +8,12 @@ description: >
   machine-checkable rubric (after Karpathy's autoresearch recipe), arms a
   state file, and the plugin's Stop hook blocks stopping until every check
   passes — feeding failing checks back as the next marching order. Also:
-  "status" reports the active goal, "bypass" is the human key around the
-  gate.
+  "status" reports the active goal, "doctor" is the health check, "bypass"
+  is the human key around the gate.
 license: MIT
 metadata:
   author: gulp
-  version: "0.3.0"
+  version: "0.4.0"
 allowed-tools:
   - Bash(python3 *)
   - Bash(sha256sum *)
@@ -41,10 +41,16 @@ append-only `attempts.jsonl` blocked-stop ledger) — gitignore it, along with
   (default false — the record still gets written, just not auto-consumed).
 - `status`: report state.json (status, pass/fail counts via rubric-check).
   **Hook-liveness warning**: armed + `last_fired_at` absent means the guard
-  has not fired this session — if the plugin was installed or updated after
-  this session started, the hook set predates it; restart the session before
+  has not fired this session — if the plugin was installed after this
+  session started, the hook set predates it; restart the session before
   trusting enforcement. (Empty `attempts.jsonl` beside an armed state is the
-  same signal at postmortem time.)
+  same signal at postmortem time.) Also say whose goal it is: state.json's
+  `session_id` vs `$CLAUDE_CODE_SESSION_ID`.
+- `doctor`: run
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/goal-doctor.sh"` and print its output
+  verbatim — state, ownership, judge pin, hook liveness, budget, and a fresh
+  rubric run. Exit 1 means it found issues (that is the finding, not a
+  broken command); read-only, never repairs.
 - `bypass`: set `status: bypassed` in state.json — the human key around the
   gate; the guard stands down and the audit trail reads "bypassed".
 
@@ -73,7 +79,10 @@ questions: autonomy begins here.
 
 Write `state.json`: `plan_path`, `rubric_sha256` (pin it —
 `sha256sum rubric.json`), `armed_at`, `deadline_epoch` (default now+2h),
-`max_stop_attempts` (default 8), `stop_attempts: 0`, `status: armed`, and
+`max_stop_attempts` (default 8), `stop_attempts: 0`, `status: armed`,
+`session_id` (from `$CLAUDE_CODE_SESSION_ID` — the guard gates only the
+arming session; a state without it conscripts every session sharing the
+project dir, pre-0.4.0 behavior), and
 `escalate` (true only when `start` was given `--escalate`; default false).
 When in doubt the guard is live, run `status` after the first stop attempt —
 armed + no `last_fired_at` is the detached-hook warning.

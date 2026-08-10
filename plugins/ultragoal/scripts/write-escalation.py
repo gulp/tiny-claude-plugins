@@ -53,13 +53,46 @@ def read_ledger(path):
 
 
 def wall_seconds(armed_at, expired_at):
+    # armed_at is an epoch int per the arm step; tolerate the ISO string an
+    # older or hand-written state might carry.
     try:
-        armed = datetime.datetime.strptime(armed_at, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=datetime.timezone.utc
-        )
-        return int((expired_at - armed).total_seconds())
+        armed = datetime.datetime.fromtimestamp(int(armed_at), datetime.timezone.utc)
     except (TypeError, ValueError):
+        try:
+            armed = datetime.datetime.strptime(
+                str(armed_at), "%Y-%m-%dT%H:%M:%SZ"
+            ).replace(tzinfo=datetime.timezone.utc)
+        except (TypeError, ValueError):
+            return None
+    return int((expired_at - armed).total_seconds())
+
+
+def sum_tokens(transcript_path):
+    """Sum token usage from the session transcript JSONL. None (not 0) when
+    the transcript is absent/unreadable or carries no usage records — an
+    unknown spend must never read as a zero spend."""
+    if not transcript_path or not os.path.isfile(transcript_path):
         return None
+    totals = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+    seen = False
+    try:
+        with open(transcript_path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                usage = (d.get("message") or {}).get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                seen = True
+                totals["input"] += usage.get("input_tokens") or 0
+                totals["output"] += usage.get("output_tokens") or 0
+                totals["cache_read"] += usage.get("cache_read_input_tokens") or 0
+                totals["cache_creation"] += usage.get("cache_creation_input_tokens") or 0
+    except OSError:
+        return None
+    return totals if seen else None
 
 
 def main():
@@ -73,6 +106,9 @@ def main():
                     help="What expired the goal")
     ap.add_argument("--project-dir", default=os.environ.get("CLAUDE_PROJECT_DIR", "."),
                     help="Project root (default: $CLAUDE_PROJECT_DIR, else .)")
+    ap.add_argument("--transcript", default=None,
+                    help="Session transcript JSONL (from Stop-hook stdin); "
+                    "token usage is summed into spend.tokens")
     ap.add_argument("--stamp", default=None, help=argparse.SUPPRESS)  # tests only
     args = ap.parse_args()
 
@@ -117,7 +153,7 @@ def main():
             "stop_attempts_used": state.get("stop_attempts", 0),
             "stop_attempts_max": state.get("max_stop_attempts"),
             "deadline_epoch": state.get("deadline_epoch"),
-            "tokens": None,
+            "tokens": sum_tokens(args.transcript),
         },
         "handoff": {
             "escalate": bool(state.get("escalate", False)),

@@ -9,13 +9,16 @@ WORK=$(mktemp -d /tmp/ultragoal-test.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-mk_state() { # dir status attempts max deadline hash
-  python3 - "$1" "$2" "$3" "$4" "$5" "$6" <<'PYEOF'
+mk_state() { # dir status attempts max deadline hash [session_id]
+  python3 - "$1" "$2" "$3" "$4" "$5" "$6" "${7:-}" <<'PYEOF'
 import json, sys
-d, status, att, mx, dl, h = sys.argv[1:7]
-json.dump({"plan_path":"p.md","rubric_sha256":h,"armed_at":0,
-           "deadline_epoch":int(dl),"max_stop_attempts":int(mx),
-           "stop_attempts":int(att),"status":status}, open(d+"/state.json","w"))
+d, status, att, mx, dl, h, sid = sys.argv[1:8]
+state = {"plan_path":"p.md","rubric_sha256":h,"armed_at":0,
+         "deadline_epoch":int(dl),"max_stop_attempts":int(mx),
+         "stop_attempts":int(att),"status":status}
+if sid:
+    state["session_id"] = sid
+json.dump(state, open(d+"/state.json","w"))
 PYEOF
 }
 mk_rubric() { # dir cmd
@@ -130,5 +133,63 @@ echo '{}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>/dev/null
 grep -q '"last_fired_at"' "$D/state.json" && fail "heartbeat: unarmed state was stamped"
 [ -z "$(rec_of "$D")" ] || fail "no-record: unarmed path wrote a record"
 
-echo "all verdicts + escalation-record matrix proven"
+# --- 0.4.0 multi-session guard ----------------------------------------------
+# Bystander session: armed by X, stop from Y -> exit 0, nothing touched.
+D="$WORK/bystander"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 0 8 9999999999 "$(hash_of "$D")" sessX
+echo '{"session_id":"sessY"}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>"$D/err"; rc=$?
+[ $rc -eq 0 ] || fail "bystander: expected exit 0, got $rc"
+grep -q '"stop_attempts": 0' "$D/state.json" || fail "bystander: attempt budget was burned"
+grep -q '"last_fired_at"' "$D/state.json" && fail "bystander: heartbeat was stamped"
+[ -f "$D/attempts.jsonl" ] && fail "bystander: ledger entry written"
+[ -s "$D/err" ] && fail "bystander: guard was not silent"
+
+# Arming session: same state, stop from X -> still enforced (exit 2, increment).
+echo '{"session_id":"sessX"}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>"$D/err"; rc=$?
+[ $rc -eq 2 ] || fail "owner: expected exit 2, got $rc"
+grep -q '"stop_attempts": 1' "$D/state.json" || fail "owner: attempt not counted"
+
+# Back-compat: state without session_id conscripts every caller.
+D="$WORK/conscript"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 0 8 9999999999 "$(hash_of "$D")"
+echo '{"session_id":"sessY"}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>/dev/null; rc=$?
+[ $rc -eq 2 ] || fail "conscript: pre-0.4.0 state should still gate everyone, got $rc"
+
+# --- spend.tokens from transcript --------------------------------------------
+D="$WORK/tokens"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 8 8 9999999999 "$(hash_of "$D")" sessX
+printf '%s\n%s\n%s\n' \
+  '{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":100,"cache_read_input_tokens":1000}}}' \
+  '{"type":"user"}' \
+  '{"type":"assistant","message":{"usage":{"input_tokens":5,"output_tokens":50}}}' \
+  > "$D/transcript.jsonl"
+echo "{\"session_id\":\"sessX\",\"transcript_path\":\"$D/transcript.jsonl\"}" | \
+  CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>/dev/null
+REC=$(rec_of "$D"); [ -n "$REC" ] || fail "tokens: no record at cap"
+[ "$(jget "$REC" spend.tokens.output)" = "150" ] || fail "tokens: output sum wrong"
+[ "$(jget "$REC" spend.tokens.input)" = "15" ] || fail "tokens: input sum wrong"
+[ "$(jget "$REC" spend.tokens.cache_read)" = "1000" ] || fail "tokens: cache_read sum wrong"
+# Absent transcript -> tokens stays null, never a fabricated zero.
+D="$WORK/notokens"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 8 8 9999999999 "$(hash_of "$D")"
+echo '{}' | CLAUDE_PROJECT_DIR="$D" "$GUARD" --state-dir "$D" 2>/dev/null
+REC=$(rec_of "$D"); [ -n "$REC" ] || fail "notokens: no record at cap"
+[ "$(jget "$REC" spend.tokens)" = "null" ] || fail "notokens: tokens should be null without a transcript"
+
+# --- doctor smoke -------------------------------------------------------------
+DOCTOR="$HERE/goal-doctor.sh"
+D="$WORK/doc-healthy"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 1 8 9999999999 "$(hash_of "$D")" sessX
+python3 - "$D" <<'PYEOF'
+import json
+d = __import__("sys").argv[1]
+s = json.load(open(d+"/state.json")); s["last_fired_at"] = "2026-01-01T00:00:00Z"
+json.dump(s, open(d+"/state.json","w"))
+PYEOF
+"$DOCTOR" --state-dir "$D" --session-id sessX >"$D/out" 2>&1; rc=$?
+[ $rc -eq 0 ] || fail "doctor-healthy: expected exit 0, got $rc ($(cat "$D/out"))"
+grep -q 'owned by this session' "$D/out" || fail "doctor-healthy: ownership line missing"
+D="$WORK/doc-sick"; mkdir -p "$D"; mk_rubric "$D" "false"; mk_state "$D" armed 0 8 9999999999 "deadbeef" sessX
+"$DOCTOR" --state-dir "$D" --session-id sessX >"$D/out" 2>&1; rc=$?
+[ $rc -eq 1 ] || fail "doctor-sick: expected exit 1 on hash mismatch + dead hook, got $rc"
+grep -q 'hash mismatch' "$D/out" || fail "doctor-sick: no hash-mismatch finding"
+grep -q 'never fired' "$D/out" || fail "doctor-sick: no liveness finding"
+"$DOCTOR" --state-dir "$WORK/does-not-exist" >/dev/null 2>&1 || fail "doctor-nogoal: no goal should be exit 0"
+
+echo "all verdicts + escalation-record + multi-session + doctor matrix proven"
 exit 0
