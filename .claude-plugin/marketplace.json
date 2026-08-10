@@ -36,6 +36,20 @@
       ]
     },
     {
+      "name": "ultraralph",
+      "source": "./plugins/ultraralph",
+      "displayName": "Ultraralph",
+      "description": "The ceremony of handing a failed rubric to muscle: /ultraralph:vanilla start @<record.json> consumes the escalation record ultragoal writes on expiry and hands it to the ultraloop engine (a ralph engine, after Geoff Huntley's technique) as a self-contained bed mode — adopt-if-present bed, own limits, record kept as audit trail. Zero loop logic: doctor for presence, files for seams; if the engine is absent the skills print the install line, never an inline loop.",
+      "category": "automation",
+      "tags": [
+        "escalation",
+        "ralph",
+        "ultraloop",
+        "autonomous",
+        "rubric"
+      ]
+    },
+    {
       "name": "rg-flag-guard",
       "source": "./plugins/rg-flag-guard",
       "displayName": "rg Flag Guard",
