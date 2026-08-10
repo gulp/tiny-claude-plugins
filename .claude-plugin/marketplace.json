@@ -5,14 +5,14 @@
     "email": "me@yektagurel.com"
   },
   "metadata": {
-    "description": "A small, curated marketplace of focused Claude Code plugins — each does one thing well."
+    "description": "A small, curated marketplace of focused Claude Code plugins \u2014 each does one thing well."
   },
   "plugins": [
     {
       "name": "agent-mail-monitor",
       "source": "./plugins/agent-mail-monitor",
       "displayName": "Agent Mail",
-      "description": "Read-only Agent Mail surface for swarm agents: auto-arms a background Monitor that notifies on each new message addressed to $AGENT_NAME, plus skills to toggle the watch and diagnose the setup — react to inbound mail without polling, and never mark it read.",
+      "description": "Read-only Agent Mail surface for swarm agents: auto-arms a background Monitor that notifies on each new message addressed to $AGENT_NAME, plus skills to toggle the watch and diagnose the setup \u2014 react to inbound mail without polling, and never mark it read.",
       "category": "multi-agent",
       "tags": [
         "agent-mail",
@@ -25,7 +25,7 @@
       "name": "ultragoal",
       "source": "./plugins/ultragoal",
       "displayName": "Ultragoal",
-      "description": "Turn a written plan into a self-enforcing run: /ultragoal start @plan.md compiles the plan's acceptance criteria into a machine-checkable rubric, then a Stop hook blocks the session from stopping until every check passes on disk — failing checks feed back as the next marching order. Hash-pinned judge, bounded enforcement (deadline + attempt cap), human bypass verb. start --iterate N (after Karpathy's autoresearch recipe) re-arms on each certified DONE.",
+      "description": "Turn a written plan into a self-enforcing run: /ultragoal start @plan.md compiles the plan's acceptance criteria into a machine-checkable rubric, then a Stop hook blocks the session from stopping until every check passes on disk \u2014 failing checks feed back as the next marching order. Hash-pinned judge, bounded enforcement (deadline + attempt cap), human bypass verb. start --iterate N (after Karpathy's autoresearch recipe) re-arms on each certified DONE. Expiry (deadline or attempt cap) leaves a machine-readable escalation record in .claude/ultra/escalations/ \u2014 embedded rubric, blocked-stop attempts ledger, spend block \u2014 for a downstream ultraralph rung or a returning human.",
       "category": "automation",
       "tags": [
         "goal",
@@ -39,7 +39,7 @@
       "name": "rg-flag-guard",
       "source": "./plugins/rg-flag-guard",
       "displayName": "rg Flag Guard",
-      "description": "PreToolUse hook that catches ripgrep's silent flag traps (-r is --replace, -h is --help — both exit 0 with wrong output) and denies with the corrected command pasted into the reason. Corpus-backed decision table, sees through timeout/xargs/sudo/rtk/snip wrappers, never false-positives on deliberate --replace idioms.",
+      "description": "PreToolUse hook that catches ripgrep's silent flag traps (-r is --replace, -h is --help \u2014 both exit 0 with wrong output) and denies with the corrected command pasted into the reason. Corpus-backed decision table, sees through timeout/xargs/sudo/rtk/snip wrappers, never false-positives on deliberate --replace idioms.",
       "category": "safety",
       "tags": [
         "ripgrep",
@@ -53,7 +53,7 @@
       "name": "obsidian-gymnast",
       "source": "./plugins/obsidian-gymnast",
       "displayName": "Obsidian Gymnast",
-      "description": "Skills that let agents drive the Obsidian CLI: the command map (search, frontmatter-as-JSON, appends) plus the silent traps — single-dash flags parsed as CLI commands, restart reusing stale argv, multi-word searches returning empty with exit 0 — with rg/fd fallbacks when the app isn't running.",
+      "description": "Skills that let agents drive the Obsidian CLI: the command map (search, frontmatter-as-JSON, appends) plus the silent traps \u2014 single-dash flags parsed as CLI commands, restart reusing stale argv, multi-word searches returning empty with exit 0 \u2014 with rg/fd fallbacks when the app isn't running.",
       "category": "productivity",
       "tags": [
         "obsidian",
