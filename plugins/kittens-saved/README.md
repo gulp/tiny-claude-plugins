@@ -18,7 +18,10 @@ only stop cleanly when nothing of *its own* is left unsaved.
   own unsaved; the only leftovers are *deliberately yours* (a credential
   decision, a merge you must approve, a `rm` it cannot run).
 - **Ledger.** An append-only JSONL history per session at
-  `.claude/.kittens-saved/<session-id>.jsonl`.
+  `.claude/.kittens-saved/<session-id>.jsonl` (per-project by design). Session
+  mutes and deny/warn overrides live operator-global in
+  `~/.claude/.kittens-saved/`, so a `toggle off` or a `blame` add holds in
+  every repo.
 - **Statusline segment.** `🐈 <saved> · 🙏 <waiting-on-you> · 🙀 <still-the-agent's>`.
 
 ## Components

@@ -18,8 +18,10 @@ This script is the ledger and the referee:
   * `hook-stop` / `hook-session-start` — wired from hooks/hooks.json.
   * `statusline` — a compact segment: saved + waiting-on-you.
 
-State is an append-only JSONL history per session, at
-`$CLAUDE_PROJECT_DIR/.claude/.kittens-saved/<session-id>.jsonl`. Stdlib only,
+State splits by true owner (tcp-4zi): the append-only JSONL ledger stays
+per-project at `$CLAUDE_PROJECT_DIR/.claude/.kittens-saved/<session-id>.jsonl`;
+session mute markers and deny/warn overrides live operator-global under
+`~/.claude/.kittens-saved/`. Stdlib only,
 so it runs under a bare `python3` (no cold start on the statusline hot path)
 as well as `uv run`.
 """
@@ -48,7 +50,8 @@ REMINDER = (
 # hand-back the agent could have done itself. Deliberately TIGHT (favour low
 # false-positives over recall) — the Stop hook only nudges on a match, so a
 # noisy list would reintroduce the every-stop spam we are removing. Users
-# extend/override via `$state_dir/denylist.txt` (one regex per line). Matched
+# extend/override via `~/.claude/.kittens-saved/denylist.txt` (one regex per
+# line, operator-global). Matched
 # case-insensitively against the last assistant message only.
 LAZY_DEFAULTS = [
     r"just (a )?(two|couple( of)?|few) more (things?|steps?|items?|tweaks?)",
@@ -128,7 +131,22 @@ def _project_dir() -> str:
 
 
 def _state_dir() -> str:
+    """Per-PROJECT state home: the ledger (per-project stats are deliberate,
+    see cmd_stats) and the project/local statusline ledgers. Session mutes and
+    operator config live in _global_dir() instead (tcp-4zi)."""
     d = os.path.join(_project_dir(), ".claude", ".kittens-saved")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _global_dir() -> str:
+    """Operator-GLOBAL state home (~/.claude/.kittens-saved), cwd-independent.
+    Holds the state whose true owner is not the project (tcp-4zi): session mute
+    markers ("quiet this conversation" is a session act, not a repo's) and the
+    denylist/warnlist overrides (punt-phrase taste is the operator's, not the
+    repo's). Keying these by cwd fragmented them per-repo — a `toggle off` in
+    one repo left the SAME session nagged in another."""
+    d = os.path.join(os.path.expanduser("~"), ".claude", ".kittens-saved")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -152,7 +170,9 @@ def _ledger_path(session: str) -> str:
 
 
 def _off_path(session: str) -> str:
-    return os.path.join(_state_dir(), f"{session}.off")
+    # Session-global on purpose: the mute keys on the session id in a FIXED
+    # dir, so it holds across every cwd the session visits (tcp-4zi).
+    return os.path.join(_global_dir(), f"{session}.off")
 
 
 def _is_off(session: str) -> bool:
@@ -281,14 +301,60 @@ def _read_stdin_json() -> dict:
 
 
 def _denylist_path() -> str:
-    return os.path.join(_state_dir(), "denylist.txt")
+    # Operator-global: overrides added in any repo apply in every repo (tcp-4zi).
+    return os.path.join(_global_dir(), "denylist.txt")
+
+
+def _gather_local_overrides() -> None:
+    """One-time gather (tcp-4zi migration): per-repo override files predating
+    the operator-global split are folded into ~/.claude/.kittens-saved/ the
+    first time a loader runs in a repo that still has them, then renamed
+    `*.migrated` — so an entry the operator later deletes from the global file
+    is NOT resurrected on revisiting the old repo (the uninstall-clobber
+    lesson, inverted). Content-deduped, never fatal."""
+    local_dir = _state_dir()
+    global_dir = _global_dir()
+    if os.path.realpath(local_dir) == os.path.realpath(global_dir):
+        return  # cwd is ~ itself; nothing to gather
+    try:
+        local_deny = os.path.join(local_dir, "denylist.txt")
+        if os.path.exists(local_deny):
+            lines = []
+            with open(local_deny, encoding="utf-8") as fh:
+                for line in fh:
+                    s = line.strip()
+                    if s and not s.startswith("#"):
+                        lines.append(s)
+            have = set(_load_overrides())
+            fresh = [ln for ln in lines if ln not in have]
+            if fresh:
+                _write_overrides(list(_load_overrides()) + fresh)
+            os.replace(local_deny, local_deny + ".migrated")
+        local_warn = os.path.join(local_dir, "warnlist.json")
+        if os.path.exists(local_warn):
+            try:
+                with open(local_warn, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (json.JSONDecodeError, ValueError):
+                data = []
+            entries = [e for e in data if isinstance(e, dict) and e.get("matcher")] \
+                if isinstance(data, list) else []
+            current = _load_warn_overrides()
+            have = {e["matcher"] for e in current}
+            fresh = [e for e in entries if e["matcher"] not in have]
+            if fresh:
+                _write_warn_overrides(current + fresh)
+            os.replace(local_warn, local_warn + ".migrated")
+    except OSError:
+        pass  # a failed gather must not wedge the Stop hook
 
 
 def _load_denylist() -> list:
     """Compiled lazy-phrase matchers: built-in `LAZY_DEFAULTS` plus any user
-    overrides in `$state_dir/denylist.txt` (one regex per line; blank lines and
-    `#` comments skipped). A pattern that fails to compile is skipped, never
-    fatal — a bad override must not wedge the Stop hook."""
+    overrides in the operator-global denylist.txt (one regex per line; blank
+    lines and `#` comments skipped). A pattern that fails to compile is
+    skipped, never fatal — a bad override must not wedge the Stop hook."""
+    _gather_local_overrides()
     pats = list(LAZY_DEFAULTS)
     override = _denylist_path()
     if os.path.exists(override):
@@ -423,7 +489,8 @@ def _current_response_text(transcript_path, max_wait: float = 3.0, poll: float =
 
 
 def _warnlist_path() -> str:
-    return os.path.join(_state_dir(), "warnlist.json")
+    # Operator-global, like the denylist (tcp-4zi).
+    return os.path.join(_global_dir(), "warnlist.json")
 
 
 def _load_warn_overrides() -> list:
@@ -450,6 +517,7 @@ def _write_warn_overrides(entries: list) -> None:
 def _load_warnlist() -> list:
     """Compiled warn entries: built-in WARN_DEFAULTS + overrides. Each is a tuple
     (compiled, reason, escape). A pattern that fails to compile is skipped."""
+    _gather_local_overrides()
     out = []
     for e in list(WARN_DEFAULTS) + _load_warn_overrides():
         try:
@@ -757,13 +825,15 @@ def cmd_config(args) -> int:
             **{k: {"value": v, "source": s, "default": d} for k, (v, s, d) in rows.items()},
             "session_enforcement": "off" if _is_off(session) else "on",
             "state_dir": _state_dir(),
+            "global_dir": _global_dir(),
         }))
         return 0
     print("🐈 kittens-saved effective config")
     for k, (v, s, d) in rows.items():
         print(f"   {k:8} = {str(v):8} (from {s}, default {d!r})")
     print(f"   session enforcement = {'off' if _is_off(session) else 'on'} (this session's .off marker)")
-    print(f"   state dir           = {_state_dir()}")
+    print(f"   state dir (project) = {_state_dir()}")
+    print(f"   state dir (global)  = {_global_dir()}  (mutes + deny/warn overrides)")
     print("   change persistent config: /plugin configure kittens-saved@<marketplace>")
     print("   per-session mute:         /kittens toggle off")
     return 0
@@ -796,6 +866,12 @@ def cmd_doctor(args) -> int:
         findings.append(("info", "plugin disabled globally (CLAUDE_PLUGIN_OPTION_ENABLED=false)", False))
     if _is_off(session):
         findings.append(("info", f"enforcement toggled OFF for session {session}", False))
+    if session == "default":
+        # The mute keys on the session id (tcp-4zi); without one, toggle/status
+        # act on the shared 'default' bucket instead of this conversation.
+        findings.append(("warn", "session id unresolvable (no --session, hook payload, or "
+                         "CLAUDE_CODE_SESSION_ID) — the session mute cannot key; "
+                         "pass --session or run via a hook", False))
 
     # Read-only statusline wiring check — repairs flow ONLY through the
     # preview→confirm→--yes path of `statusline install/rm`, never --fix.
