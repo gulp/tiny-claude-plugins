@@ -4,7 +4,7 @@ Source: `~/.opensrc/repos/github.com/karpathy/autoresearch/master/` (fetched
 2026-08-08; branch `master`, not `main`). Three files matter: `prepare.py`
 (fixed, read-only), `train.py` (the ONLY file the agent edits), `program.md`
 (the human-edited "research org code" — a lightweight skill). Design analysis
-below maps its choices onto goal-automata and the adjudicated-ralph harness.
+below maps its choices onto ultragoal and the adjudicated-ralph harness.
 
 ## The loop (program.md, condensed)
 
@@ -15,7 +15,7 @@ status  description`, deliberately untracked) → repeat forever.
 
 ## Load-bearing design choices, and what they map to here
 
-| autoresearch | why it works | goal-automata / adjudicated-ralph analogue |
+| autoresearch | why it works | ultragoal / adjudicated-ralph analogue |
 |---|---|---|
 | single mutable file (`train.py`) | scope containment; diffs reviewable | disposable clone / bwrap `/workspace`; one bead per iteration |
 | `prepare.py` + eval harness read-only, "ground truth metric" | agent cannot reward-hack the judge | HOST runs `make verify` itself; guest close accepted only on host-verified evidence |
@@ -35,7 +35,7 @@ autoresearch's weakest joint is that its continuation guarantee is
 until the model's stop-reflex wins once at 3am. Claude Code's `/goal` turns
 that same guarantee into a **Stop-hook invariant**: the session is blocked
 from stopping until the condition holds on disk. When arming an
-autoresearch-style loop via goal-automata, phrase the condition as the
+autoresearch-style loop via ultragoal, phrase the condition as the
 ledger's state, not the work's vibe — e.g.
 `/goal results.tsv contains >= 20 data rows and the best val_bpb row beats the baseline row`
 — so "never stop" is enforced by the harness and "done" is a grep, not a
@@ -61,7 +61,7 @@ and apply to what you care about."* The task-giving pattern has four parts:
    harder — read papers referenced in the code, re-read the in-scope files,
    combine previous near-misses, try more radical changes."
 
-**Fold into goal-automata**: for loop-shaped work, don't pack the loop into
+**Fold into ultragoal**: for loop-shaped work, don't pack the loop into
 the `/goal` condition. Seed a program file in the pane's cwd, send the
 one-line kickoff pointing at it, participate in (or fast-forward) the setup
 gate, and arm `/goal <ledger condition>` at the moment the program says

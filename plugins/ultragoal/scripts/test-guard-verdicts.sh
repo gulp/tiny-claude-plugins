@@ -5,7 +5,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GUARD="$HERE/goal-stop-guard.sh"
-WORK=$(mktemp -d /tmp/goal-automata-test.XXXXXX)
+WORK=$(mktemp -d /tmp/ultragoal-test.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: $1" >&2; exit 1; }
 

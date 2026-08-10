@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rubric-check.sh — run every check in the goal-automata rubric.
+# rubric-check.sh — run every check in the ultragoal rubric.
 # stdout: one JSON line {"pass":N,"fail":M,"failing":[ids]}
 # stderr: human-readable per-check table.
 set -u
@@ -11,8 +11,8 @@ Usage: rubric-check.sh [--rubric PATH] [--state-dir DIR] [--help]
 Runs every check in the rubric and reports results.
 
 Flags:
-  --rubric PATH     Rubric file (default: $CLAUDE_PROJECT_DIR/.claude/.goal-automata/rubric.json,
-                    falling back to ./.claude/.goal-automata/rubric.json)
+  --rubric PATH     Rubric file (default: $CLAUDE_PROJECT_DIR/.claude/.ultragoal/rubric.json,
+                    falling back to ./.claude/.ultragoal/rubric.json)
   --state-dir DIR   Directory holding rubric.json (alternative to --rubric)
   --help            Show this help.
 
@@ -40,7 +40,7 @@ done
 
 if [ -z "$RUBRIC" ]; then
   base="${CLAUDE_PROJECT_DIR:-.}"
-  RUBRIC="$base/.claude/.goal-automata/rubric.json"
+  RUBRIC="$base/.claude/.ultragoal/rubric.json"
 fi
 [ -f "$RUBRIC" ] || { echo "rubric-check: rubric not found: $RUBRIC" >&2; exit 3; }
 

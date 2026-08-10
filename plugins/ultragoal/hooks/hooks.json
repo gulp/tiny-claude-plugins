@@ -7,7 +7,7 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/goal-stop-guard.sh\"",
             "timeout": 120,
-            "statusMessage": "goal-automata: checking rubric"
+            "statusMessage": "ultragoal: checking rubric"
           }
         ]
       }

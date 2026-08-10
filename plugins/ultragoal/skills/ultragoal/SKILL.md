@@ -1,18 +1,19 @@
 ---
-name: goal-automata
+name: ultragoal
 description: >
   Turn a written plan into a self-enforcing run. Use when the user invokes
-  /goal-automata @<plan.md> after a planning discussion, says "goal-automate
-  this plan", "arm the plan", or asks for a run that cannot stop until its
-  acceptance criteria hold on disk. Compiles the plan's acceptance criteria
-  into a machine-checkable rubric, arms a state file, and the plugin's Stop
-  hook blocks stopping until every check passes — feeding failing checks back
-  as the next marching order. Also: "status" reports the active goal,
-  "stop" aborts it.
+  /ultragoal start @<plan.md> after a planning discussion, says "arm the
+  plan", or asks for a run that cannot stop until its acceptance criteria
+  hold on disk. Compiles the plan's acceptance criteria into a
+  machine-checkable rubric (after Karpathy's autoresearch recipe), arms a
+  state file, and the plugin's Stop hook blocks stopping until every check
+  passes — feeding failing checks back as the next marching order. Also:
+  "status" reports the active goal, "bypass" is the human key around the
+  gate.
 license: MIT
 metadata:
   author: gulp
-  version: "0.1.0"
+  version: "0.2.0"
 allowed-tools:
   - Bash(python3 *)
   - Bash(sha256sum *)
@@ -21,27 +22,28 @@ allowed-tools:
   - Write
 ---
 
-# goal-automata
+# ultragoal
 
-One argument in, one invariant out: `/goal-automata @<plan.md>` compiles the
-plan into a rubric and arms the Stop hook; the session then cannot stop until
-the rubric passes on disk (or a bounded verdict fires). State lives in
-`$CLAUDE_PROJECT_DIR/.claude/.goal-automata/` — gitignore it.
+One argument in, one invariant out: `/ultragoal start @<plan.md>` compiles
+the plan into a rubric and arms the Stop hook; the session then cannot stop
+until the rubric passes on disk (or a bounded verdict fires). State lives in
+`$CLAUDE_PROJECT_DIR/.claude/.ultragoal/` — gitignore it.
 
 ## Inputs
 
-- `@<plan.md>`: the plan to enforce. Its acceptance criteria must be
+- `start @<plan.md>`: the plan to enforce. Its acceptance criteria must be
   checkable by commands; if some aren't, name the gaps once and ask for one
-  round of sharpening.
+  round of sharpening. Optional `--iterate N` — see the iterate loop below.
 - `status`: report state.json (status, pass/fail counts via rubric-check).
-- `stop`: set `status: aborted` in state.json — the guard stands down.
+- `bypass`: set `status: bypassed` in state.json — the human key around the
+  gate; the guard stands down and the audit trail reads "bypassed".
 
 ## Steps
 
 ### 1. Compile the rubric
 
 Read the plan. Distill every acceptance criterion into
-`.claude/.goal-automata/rubric.json`:
+`.claude/.ultragoal/rubric.json`:
 `{"checks":[{"id","description","command","expect_exit":0}]}` — each command
 runnable from the project root by the guard, by you, and by the human.
 **Vacuity guard**: run
@@ -74,7 +76,7 @@ rubric.json after arming — the hash pin turns that into a `TAMPERED` verdict,
 not a success.
 
 **Success criteria**: `status` in state.json is `done` — or a loud bounded
-verdict (`incomplete`/`aborted`/`tampered`) the human has seen.
+verdict (`incomplete`/`bypassed`/`tampered`) the human has seen.
 
 ## Verdicts (guard-owned, for reference)
 
@@ -82,24 +84,24 @@ verdict (`incomplete`/`aborted`/`tampered`) the human has seen.
 - `incomplete` — deadline or stop-attempt cap hit; failing table printed.
   Degrade to a report, never a hostage.
 - `tampered` — rubric edited after arming; success cannot be certified.
-- `aborted` — human ran `/goal-automata stop`.
+- `bypassed` — human ran `/ultragoal bypass`.
 
-## ultraralph — the improvement loop (opt-in verb)
+## start --iterate N — the improvement loop (opt-in)
 
-`/goal-automata ultraralph @<plan.md> N` — normal flow, plus
-`"ultraralph": {"max_iterations": N, "current_iteration": 0, "iterations": []}`
-in state.json. Bare `/goal-automata ultraralph N` (no plan): scan
+`/ultragoal start @<plan.md> --iterate N` — normal flow, plus
+`"iterate": {"max_iterations": N, "current_iteration": 0, "iterations": []}`
+in state.json. Bare `/ultragoal start --iterate N` (no plan): scan
 `docs/plans/*.md` for frontmatter `status: proposal` (oldest first), offer the
 pick + the next two candidates + "something else?" via one question; accepted
 plan flips to `status: active`, done plans to `status: shipped`.
 
 On each DONE verdict with iterations remaining: read
-`references/ultraralph-prompt.md` and follow it exactly — 30 ideas →
-kill-gate (simplicity criterion) → ONE plan to `docs/plans/ultraralph/` →
-re-run this skill's steps 1-4 on it. Zero surviving ideas → `status:
-converged`, the best terminal state; report the iteration ledger and stop.
-Every DONE also mints a git tag (guard-owned) — the timeline of certified
-states is the scrub track.
+`references/iterate-prompt.md` (after Karpathy's autoresearch recipe) and
+follow it exactly — 30 ideas → kill-gate (simplicity criterion) → ONE plan to
+`docs/plans/iterate/` → re-run this skill's steps 1-4 on it. Zero surviving
+ideas → `status: converged`, the best terminal state; report the iteration
+ledger and stop. Every DONE also mints a git tag (guard-owned) — the timeline
+of certified states is the scrub track.
 
 ## References
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# goal-stop-guard.sh — Stop-hook enforcement for goal-automata.
+# goal-stop-guard.sh — Stop-hook enforcement for ultragoal.
 # Reads the Stop-hook JSON on stdin (unused fields tolerated). No-op unless a
 # goal is armed. Exit 0 = allow stop; exit 2 = block stop, stderr feeds back
 # the failing checks as the session's next marching order.
@@ -9,11 +9,11 @@ usage() {
   cat <<'EOF'
 Usage: goal-stop-guard.sh [--state-dir DIR] [--help]
 
-Stop-hook entry for goal-automata. Reads hook JSON on stdin.
+Stop-hook entry for ultragoal. Reads hook JSON on stdin.
 
 Flags:
   --state-dir DIR   Directory holding state.json + rubric.json
-                    (default: $CLAUDE_PROJECT_DIR/.claude/.goal-automata)
+                    (default: $CLAUDE_PROJECT_DIR/.claude/.ultragoal)
   --help            Show this help.
 
 Behavior (armed goals only; otherwise silent no-op, exit 0):
@@ -23,12 +23,12 @@ Behavior (armed goals only; otherwise silent no-op, exit 0):
   attempts/deadline up -> status=incomplete, allow stop, loud verdict
 
 Exit codes:
-  0  allow stop (no goal, or done/tampered/incomplete/aborted verdict)
+  0  allow stop (no goal, or done/tampered/incomplete/bypassed verdict)
   2  block stop — goal armed and rubric not yet satisfied
 EOF
 }
 
-STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/.goal-automata"
+STATE_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/.ultragoal"
 while [ $# -gt 0 ]; do
   case "$1" in
     --state-dir) STATE_DIR="${2:-}"; shift 2 ;;
@@ -56,14 +56,14 @@ PYEOF
 
 STATUS=$(field status)
 [ "$STATUS" = "armed" ] || exit 0
-[ -f "$RUBRIC" ] || { echo "goal-automata: armed but rubric missing — standing down" >&2; setfield status incomplete; exit 0; }
+[ -f "$RUBRIC" ] || { echo "ultragoal: armed but rubric missing — standing down" >&2; setfield status incomplete; exit 0; }
 
 # Hash pin: the judge must not have been edited since arming.
 PINNED=$(field rubric_sha256)
 ACTUAL=$(sha256sum "$RUBRIC" | cut -d' ' -f1)
 if [ -n "$PINNED" ] && [ "$PINNED" != "$ACTUAL" ]; then
   setfield status tampered
-  echo "goal-automata VERDICT: TAMPERED — rubric.json was modified after arming (pinned ${PINNED:0:12}…, found ${ACTUAL:0:12}…). Success cannot be certified." >&2
+  echo "ultragoal VERDICT: TAMPERED — rubric.json was modified after arming (pinned ${PINNED:0:12}…, found ${ACTUAL:0:12}…). Success cannot be certified." >&2
   exit 0
 fi
 
@@ -74,13 +74,13 @@ DEADLINE=$(field deadline_epoch); DEADLINE=${DEADLINE:-0}
 NOW=$(date +%s)
 if [ "$DEADLINE" -gt 0 ] && [ "$NOW" -gt "$DEADLINE" ]; then
   setfield status incomplete
-  echo "goal-automata VERDICT: INCOMPLETE — deadline passed. Failing checks:" >&2
+  echo "ultragoal VERDICT: INCOMPLETE — deadline passed. Failing checks:" >&2
   "$(dirname "$0")/rubric-check.sh" --rubric "$RUBRIC" >/dev/null || true
   exit 0
 fi
 if [ "$ATTEMPTS" -ge "$MAX" ]; then
   setfield status incomplete
-  echo "goal-automata VERDICT: INCOMPLETE — $ATTEMPTS stop attempts reached the cap ($MAX). Failing checks:" >&2
+  echo "ultragoal VERDICT: INCOMPLETE — $ATTEMPTS stop attempts reached the cap ($MAX). Failing checks:" >&2
   "$(dirname "$0")/rubric-check.sh" --rubric "$RUBRIC" >/dev/null || true
   exit 0
 fi
@@ -93,7 +93,7 @@ if [ "$RC" -eq 0 ]; then
   # otherwise the tag points at a tree without the certified work.
   if git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --git-dir >/dev/null 2>&1; then
     if [ -n "$(git -C "${CLAUDE_PROJECT_DIR:-.}" status --porcelain 2>/dev/null)" ]; then
-      echo "goal-automata: rubric passes but the working tree is dirty — commit your work (git add + commit), then stop again to certify. Attempt $((ATTEMPTS+1))/$MAX." >&2
+      echo "ultragoal: rubric passes but the working tree is dirty — commit your work (git add + commit), then stop again to certify. Attempt $((ATTEMPTS+1))/$MAX." >&2
       exit 2
     fi
   fi
@@ -106,16 +106,16 @@ if [ "$RC" -eq 0 ]; then
     if [ -z "$LAST" ]; then TAG="0.0.0"; else
       TAG=$(echo "$LAST" | awk -F. '{printf "%d.%d.%d", $1, $2, $3+1}')
     fi
-    if git -C "${CLAUDE_PROJECT_DIR:-.}" tag -a "$TAG" -m "goal-automata DONE: $(field plan_path) rubric ${ACTUAL:0:12}" 2>/dev/null; then
+    if git -C "${CLAUDE_PROJECT_DIR:-.}" tag -a "$TAG" -m "ultragoal DONE: $(field plan_path) rubric ${ACTUAL:0:12}" 2>/dev/null; then
       setfield tag "$TAG"
     else
-      echo "goal-automata: tag $TAG could not be created (dirty ref or no commits) — verdict unaffected" >&2; TAG=""
+      echo "ultragoal: tag $TAG could not be created (dirty ref or no commits) — verdict unaffected" >&2; TAG=""
     fi
   else
-    echo "goal-automata: not a git repo — skip-tag mode, verdict unaffected" >&2
+    echo "ultragoal: not a git repo — skip-tag mode, verdict unaffected" >&2
   fi
-  echo "goal-automata VERDICT: DONE — all rubric checks pass, hash verified.${TAG:+ tagged $TAG.} $RESULT" >&2
+  echo "ultragoal VERDICT: DONE — all rubric checks pass, hash verified.${TAG:+ tagged $TAG.} $RESULT" >&2
   exit 0
 fi
-echo "goal-automata: goal not yet met — $RESULT. Run the failing checks' commands (see $RUBRIC), fix what they test, then finish. Attempt $((ATTEMPTS+1))/$MAX." >&2
+echo "ultragoal: goal not yet met — $RESULT. Run the failing checks' commands (see $RUBRIC), fix what they test, then finish. Attempt $((ATTEMPTS+1))/$MAX." >&2
 exit 2

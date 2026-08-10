@@ -22,10 +22,10 @@
       ]
     },
     {
-      "name": "goal-automata",
-      "source": "./plugins/goal-automata",
-      "displayName": "Goal Automata",
-      "description": "Turn a written plan into a self-enforcing run: /goal-automata @plan.md compiles the plan's acceptance criteria into a machine-checkable rubric, then a Stop hook blocks the session from stopping until every check passes on disk — failing checks feed back as the next marching order. Hash-pinned judge, bounded enforcement (deadline + attempt cap), human escape verb.",
+      "name": "ultragoal",
+      "source": "./plugins/ultragoal",
+      "displayName": "Ultragoal",
+      "description": "Turn a written plan into a self-enforcing run: /ultragoal start @plan.md compiles the plan's acceptance criteria into a machine-checkable rubric, then a Stop hook blocks the session from stopping until every check passes on disk — failing checks feed back as the next marching order. Hash-pinned judge, bounded enforcement (deadline + attempt cap), human bypass verb. start --iterate N (after Karpathy's autoresearch recipe) re-arms on each certified DONE.",
       "category": "automation",
       "tags": [
         "goal",
