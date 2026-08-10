@@ -106,8 +106,25 @@ def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 
+_CWD_FALLBACK_WARNED = False
+
+
 def _project_dir() -> str:
-    return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    """CLAUDE_PROJECT_DIR, else cwd — loudly. The env var does NOT reach
+    Bash-tool subprocesses (vault-49q, 2026-08-10): CLI calls then resolve
+    state by cwd and scatter per-repo, which is by design for hooks but a
+    silent surprise for a human-driven call. One stderr notice per process
+    makes the scatter visible at write time without breaking any output
+    contract (all machine output is stdout)."""
+    d = os.environ.get("CLAUDE_PROJECT_DIR")
+    if d:
+        return d
+    global _CWD_FALLBACK_WARNED
+    cwd = os.getcwd()
+    if not _CWD_FALLBACK_WARNED:
+        _CWD_FALLBACK_WARNED = True
+        print(f"kittens: CLAUDE_PROJECT_DIR unset — using cwd {cwd}", file=sys.stderr)
+    return cwd
 
 
 def _state_dir() -> str:

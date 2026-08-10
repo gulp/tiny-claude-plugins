@@ -310,6 +310,22 @@ class TestStatusAndStale(SLBase):
         self.assertEqual(rep["winning_scope"], "local")
 
 
+class TestCwdFallbackNotice(SLBase):
+    def test_unset_project_dir_warns_on_stderr_once(self):
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        proc = subprocess.run(
+            ["python3", os.path.join(HERE, "kittens.py"), "count"],
+            capture_output=True, text=True, env=env, cwd=self.proj)
+        self.assertIn("CLAUDE_PROJECT_DIR unset — using cwd", proc.stderr)
+        self.assertIn(self.proj, proc.stderr)
+
+    def test_set_project_dir_stays_silent(self):
+        proc = subprocess.run(
+            ["python3", os.path.join(HERE, "kittens.py"), "count"],
+            capture_output=True, text=True, env=dict(os.environ), cwd=self.proj)
+        self.assertNotIn("CLAUDE_PROJECT_DIR", proc.stderr)
+
+
 class TestScopesAndConcurrency(SLBase):
     def test_local_wrapper_distinct_and_gitignored(self):
         self.make_fake_segment()
