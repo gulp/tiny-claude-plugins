@@ -7,6 +7,12 @@
 #   L2  clone      git -C ~/.claude/plugins/marketplaces/<mkt> rev-parse HEAD
 #   L3  cache      ~/.claude/plugins/cache/<mkt>/<plugin>/<version>/
 #
+# Directory-source marketplaces (known_marketplaces.json source.source ==
+# "directory") have no L2 clone: installs read the registered directory live,
+# so L2 collapses onto L0 and the clone/fetch-lag checks do not apply. G2
+# (unpushed) and G1 (cache) still run, with the manifest read from the
+# registered directory.
+#
 # Gaps:
 #   G2  L0 != L1   unpushed work            → git push
 #   G1  L2 version missing from L3 cache    → /reload-plugins
@@ -135,7 +141,28 @@ if [ "$manifest_name" != "$marketplace" ]; then
 	exit 3
 fi
 
-if [ ! -d "$clone_dir/.git" ] && [ ! -f "$clone_dir/.git" ]; then
+# Directory-source marketplaces have no clone: L2 is the registered directory.
+known=$claude_home/plugins/known_marketplaces.json
+mkt_source_type=""
+if [ -f "$known" ]; then
+	mkt_source_type=$(jq -r --arg m "$marketplace" '.[$m].source.source // empty' "$known")
+fi
+
+if [ "$mkt_source_type" = "directory" ]; then
+	mkt_dir=$(jq -r --arg m "$marketplace" '.[$m].installLocation // .[$m].source.path // empty' "$known")
+	if [ -z "$mkt_dir" ] || [ ! -d "$mkt_dir" ]; then
+		printf '[FAIL] marketplace-dir — %s is registered as a directory marketplace but the directory is missing (%s)\n    → claude plugin marketplace add %s\n' \
+			"$marketplace" "${mkt_dir:-no path recorded}" "$repo"
+		exit 3
+	fi
+	mkt_dir=$(CDPATH= cd -- "$mkt_dir" && pwd)
+	if [ "$mkt_dir" != "$repo" ]; then
+		printf '[FAIL] marketplace-dir — registered directory %s is not the worktree %s\n    → pass --repo %s or re-register the marketplace from this worktree\n' \
+			"$mkt_dir" "$repo" "$mkt_dir"
+		exit 3
+	fi
+	clone_dir=$mkt_dir
+elif [ ! -d "$clone_dir/.git" ] && [ ! -f "$clone_dir/.git" ]; then
 	# Distinguish "never registered" from a broken empty dir.
 	if [ ! -e "$clone_dir" ]; then
 		printf '[FAIL] marketplace-clone — unregistered marketplace %s (no clone at %s)\n    → claude plugin marketplace add <owner/%s> --scope project\n' \
@@ -187,18 +214,21 @@ if [ "$skip_g2" -eq 0 ]; then
 fi
 
 # --- fetch lag (L1 vs L2) ---------------------------------------------------
-if ! l1=$(full "$repo" origin/main 2>/dev/null); then
-	printf '[FAIL] remote — cannot resolve origin/main in %s\n    → git remote add/fetch origin, or create origin/main\n' "$repo"
-	exit 3
-fi
-if ! l2=$(full "$clone_dir" HEAD 2>/dev/null); then
-	printf '[FAIL] marketplace-clone — cannot resolve HEAD in %s\n    → /plugin marketplace update %s\n' "$clone_dir" "$marketplace"
-	exit 3
-fi
-if [ "$l1" != "$l2" ]; then
-	fail_line "marketplace-fetch" \
-		"L1 origin/main $(short "$repo" origin/main) != L2 clone HEAD $(short "$clone_dir" HEAD) — marketplace clone lags remote" \
-		"/plugin marketplace update $marketplace"
+# Directory marketplaces have no L1→L2 copy step, so fetch lag cannot exist.
+if [ "$mkt_source_type" != "directory" ]; then
+	if ! l1=$(full "$repo" origin/main 2>/dev/null); then
+		printf '[FAIL] remote — cannot resolve origin/main in %s\n    → git remote add/fetch origin, or create origin/main\n' "$repo"
+		exit 3
+	fi
+	if ! l2=$(full "$clone_dir" HEAD 2>/dev/null); then
+		printf '[FAIL] marketplace-clone — cannot resolve HEAD in %s\n    → /plugin marketplace update %s\n' "$clone_dir" "$marketplace"
+		exit 3
+	fi
+	if [ "$l1" != "$l2" ]; then
+		fail_line "marketplace-fetch" \
+			"L1 origin/main $(short "$repo" origin/main) != L2 clone HEAD $(short "$clone_dir" HEAD) — marketplace clone lags remote" \
+			"/plugin marketplace update $marketplace"
+	fi
 fi
 
 # --- G1: L2 plugin versions missing from L3 cache ---------------------------
