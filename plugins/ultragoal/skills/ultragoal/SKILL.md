@@ -27,14 +27,24 @@ allowed-tools:
 One argument in, one invariant out: `/ultragoal start @<plan.md>` compiles
 the plan into a rubric and arms the Stop hook; the session then cannot stop
 until the rubric passes on disk (or a bounded verdict fires). State lives in
-`$CLAUDE_PROJECT_DIR/.claude/.ultragoal/` — gitignore it.
+`$CLAUDE_PROJECT_DIR/.claude/.ultragoal/` (state.json, rubric.json, and the
+append-only `attempts.jsonl` blocked-stop ledger) — gitignore it, along with
+`.claude/ultra/` (escalation records).
 
 ## Inputs
 
 - `start @<plan.md>`: the plan to enforce. Its acceptance criteria must be
   checkable by commands; if some aren't, name the gaps once and ask for one
   round of sharpening. Optional `--iterate N` — see the iterate loop below.
+  Optional `--escalate` → `"escalate": true` in state.json: on expiry the
+  escalation record is marked for pickup by an installed ultraralph rung
+  (default false — the record still gets written, just not auto-consumed).
 - `status`: report state.json (status, pass/fail counts via rubric-check).
+  **Hook-liveness warning**: armed + `last_fired_at` absent means the guard
+  has not fired this session — if the plugin was installed or updated after
+  this session started, the hook set predates it; restart the session before
+  trusting enforcement. (Empty `attempts.jsonl` beside an armed state is the
+  same signal at postmortem time.)
 - `bypass`: set `status: bypassed` in state.json — the human key around the
   gate; the guard stands down and the audit trail reads "bypassed".
 
@@ -63,7 +73,10 @@ questions: autonomy begins here.
 
 Write `state.json`: `plan_path`, `rubric_sha256` (pin it —
 `sha256sum rubric.json`), `armed_at`, `deadline_epoch` (default now+2h),
-`max_stop_attempts` (default 8), `stop_attempts: 0`, `status: armed`.
+`max_stop_attempts` (default 8), `stop_attempts: 0`, `status: armed`, and
+`escalate` (true only when `start` was given `--escalate`; default false).
+When in doubt the guard is live, run `status` after the first stop attempt —
+armed + no `last_fired_at` is the detached-hook warning.
 
 **Success criteria**: state.json valid; hash matches the rubric on disk.
 
@@ -82,7 +95,11 @@ verdict (`incomplete`/`bypassed`/`tampered`) the human has seen.
 
 - `done` — all checks pass, hash verified. The only success.
 - `incomplete` — deadline or stop-attempt cap hit; failing table printed.
-  Degrade to a report, never a hostage.
+  Degrade to a report, never a hostage. An escalation record (seam schema v1:
+  embedded rubric, attempts ledger, spend block) is written to
+  `.claude/ultra/escalations/` — the path is printed with the verdict. Note
+  the two vocabularies: state.json stays `incomplete`; the record's own
+  verdict field is `expired`.
 - `tampered` — rubric edited after arming; success cannot be certified.
 - `bypassed` — human ran `/ultragoal bypass`.
 
