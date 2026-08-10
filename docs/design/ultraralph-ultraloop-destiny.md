@@ -66,6 +66,12 @@ the technique credit lives in the tagline.
   binary
 - tagline: "**ultraloop — a ralph engine, after Geoff Huntley's technique**"
 
+**Cascade verified landed** (2026-08-10, session fe94f609): `~/src/ultraloop`
+is the repo (HEAD `c94311d`), `~/src/ralph-this` is now a symlink to it,
+`~/.local/bin/ultraloop → ~/src/ultraloop/bin/ultraloop` is on PATH and
+operational (`ultraloop --version` → HEAD sha; no `bin/ralph` remains).
+Env/flag prefixes still follow at the engine's own pace, per above.
+
 **Rejected names, with reasons:**
 
 - `ralph` (keep) — Ruling 1; also mechanical PATH collision.
