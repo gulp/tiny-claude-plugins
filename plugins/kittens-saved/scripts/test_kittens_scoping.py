@@ -161,5 +161,79 @@ class TestDoctorSessionAnchor(ScopingBase):
                              for f in out["findings"]))
 
 
+class TestSessionLedgerAnchor(ScopingBase):
+    """The session ledger must follow the SESSION, not the cwd.
+
+    CLAUDE_PROJECT_DIR does not reach Bash-tool subprocesses, so before the
+    anchor a `save` run from a different cwd forked a second ledger that the
+    Stop hook (which does get the env var) never read.
+    """
+
+    def cwd_in(self, d):
+        """Run with env unset and cwd at d — the Bash-tool subprocess shape."""
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        prev = os.getcwd()
+        os.chdir(d)
+        self.addCleanup(os.chdir, prev)
+
+    def test_anchor_beats_cwd_so_one_session_has_one_ledger(self):
+        # Hook context (env set to proj_a) writes the anchor...
+        os.environ["CLAUDE_PROJECT_DIR"] = self.proj_a
+        ks._append(SESSION, {"kind": "save", "n": 1})
+        # ...then a CLI call from a DIFFERENT cwd must still land in proj_a.
+        self.cwd_in(self.proj_b)
+        ks._append(SESSION, {"kind": "save", "n": 1})
+
+        self.assertEqual(len(ks._read(SESSION)), 2, "both saves in one ledger")
+        forked = os.path.join(self.proj_b, ".claude", ".kittens-saved",
+                              f"{SESSION}.jsonl")
+        self.assertFalse(os.path.exists(forked), "no ledger forked under cwd")
+
+    def test_env_is_authoritative_and_refreshes_a_wrong_anchor(self):
+        ks._write_anchor(SESSION, self.proj_b)
+        os.environ["CLAUDE_PROJECT_DIR"] = self.proj_a
+        self.assertEqual(ks._session_project_dir(SESSION), self.proj_a)
+        self.assertEqual(ks._read_anchor(SESSION), self.proj_a)
+
+    def test_a_cwd_guess_is_used_but_never_pins_the_session(self):
+        # Regression on the first cut of this fix: a `config` run from an
+        # unrelated repo wrote an anchor and captured a live session whose real
+        # ledger was elsewhere. Only the authoritative env path may WRITE.
+        self.cwd_in(self.proj_b)
+        self.assertEqual(ks._session_project_dir(SESSION), self.proj_b,
+                         "cwd is still used when nothing better is known")
+        self.assertIsNone(ks._read_anchor(SESSION),
+                          "but a guess must not capture the session")
+
+    def test_hook_still_wins_after_a_cwd_guess(self):
+        self.cwd_in(self.proj_b)
+        ks._session_project_dir(SESSION)          # guess, records nothing
+        os.environ["CLAUDE_PROJECT_DIR"] = self.proj_a
+        self.assertEqual(ks._session_project_dir(SESSION), self.proj_a)
+        self.assertEqual(ks._read_anchor(SESSION), self.proj_a)
+
+    def test_default_session_is_never_anchored(self):
+        # An unresolvable id must not claim a project — every such session
+        # would otherwise collide on one anchor file.
+        self.cwd_in(self.proj_b)
+        self.assertEqual(ks._session_project_dir("default"), self.proj_b)
+        self.assertIsNone(ks._read_anchor("default"))
+        self.assertFalse(os.path.exists(ks._anchor_path("default")))
+
+    def test_stale_anchor_pointing_at_a_deleted_dir_is_ignored(self):
+        gone = os.path.join(self.tmp, "deleted-project")
+        os.makedirs(gone)
+        ks._write_anchor(SESSION, gone)
+        shutil.rmtree(gone)
+        self.cwd_in(self.proj_b)
+        self.assertEqual(ks._session_project_dir(SESSION), self.proj_b,
+                         "a ghost dir must not be resurrected")
+
+    def test_anchor_lives_in_the_operator_global_dir(self):
+        # Anchors are session identity, not project state — they must not sit
+        # inside the project whose location they are trying to record.
+        self.assertTrue(ks._anchor_path(SESSION).startswith(ks._global_dir()))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

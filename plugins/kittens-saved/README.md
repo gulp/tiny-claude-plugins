@@ -18,8 +18,15 @@ only stop cleanly when nothing of *its own* is left unsaved.
   own unsaved; the only leftovers are *deliberately yours* (a credential
   decision, a merge you must approve, a `rm` it cannot run).
 - **Ledger.** An append-only JSONL history per session at
-  `.claude/.kittens-saved/<session-id>.jsonl` (per-project by design). Session
-  mutes and deny/warn overrides live operator-global in
+  `.claude/.kittens-saved/<session-id>.jsonl` (per-project by design). The
+  project is the one the session is **anchored** to, not the cwd of whatever
+  call is writing: `CLAUDE_PROJECT_DIR` does not reach Bash-tool subprocesses,
+  so a `save` invoked from another directory used to fork a second ledger the
+  Stop hook never read. The anchor is recorded at
+  `~/.claude/.kittens-saved/anchors/<session-id>`; the env var still wins when
+  present (hooks carry it and hooks are the consumer). `config` prints both the
+  resolved ledger dir and the anchor.
+- Session mutes and deny/warn overrides live operator-global in
   `~/.claude/.kittens-saved/`, so a `toggle off` or a `blame` add holds in
   every repo.
 - **Statusline segment.** `🐈 <saved> · 🙏 <waiting-on-you> · 🙀 <still-the-agent's>`.

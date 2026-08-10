@@ -165,8 +165,94 @@ def _resolve_session(explicit: str | None, stdin_payload: dict | None) -> str:
     return "default"
 
 
+def _anchor_path(session: str) -> str:
+    """Where a session records which project its ledger belongs to."""
+    return os.path.join(_global_dir(), "anchors", session)
+
+
+def _session_project_dir(session: str) -> str:
+    """The project dir a SESSION's ledger belongs to — cwd-independent.
+
+    `_project_dir()` answers "where am I standing", which is right for
+    project-scoped state (the statusline ledgers) and wrong for the session
+    ledger: CLAUDE_PROJECT_DIR does not reach Bash-tool subprocesses
+    (vault-49q), so a `save` run from a different cwd than the session started
+    in forked a SECOND ledger that the Stop hook — which does get the env var —
+    never read. The kitten was recorded and then invisible.
+
+    Resolution order, and why:
+      1. `default` session (id unresolvable, or traversal-collapsed) — do NOT
+         anchor. An untrustworthy id must not claim a project, and every such
+         session would collide on one anchor file.
+      2. CLAUDE_PROJECT_DIR — authoritative, because hooks carry it and hooks
+         are the consumer. Refresh the anchor from it so later CLI calls in
+         this session agree with the hook.
+      3. The anchor a previous call wrote — this is what makes a Bash-tool
+         `save` land in the hook's ledger instead of cwd's.
+      4. cwd, as before — USED but never RECORDED. Only the authoritative
+         (env-bearing) path may write an anchor. Caught by dogfooding the first
+         cut of this fix: a `config` run from an unrelated repo pinned a live
+         session to that repo, while its real ledger sat elsewhere. A guess
+         must not capture a session; if no hook ever runs we simply degrade to
+         the old cwd behaviour, which is the status quo rather than a
+         regression.
+
+    Deliberately NOT a migration: no existing ledger moves. Under a hook (env
+    set) this resolves exactly as it did before, so sessions running older code
+    are unaffected — the tcp-4zi lesson about migrating state out from under
+    live consumers.
+    """
+    if not session or session == "default":
+        return _project_dir()
+
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env:
+        _write_anchor(session, env)
+        return env
+
+    anchored = _read_anchor(session)
+    if anchored:
+        return anchored
+
+    return _project_dir()
+
+
+def _read_anchor(session: str) -> str | None:
+    """The anchored project dir, or None. A stale anchor pointing at a
+    now-missing dir is ignored rather than honoured — the dir may have been
+    deleted or renamed, and recreating it there would resurrect a ghost."""
+    try:
+        with open(_anchor_path(session), encoding="utf-8") as fh:
+            d = fh.read().strip()
+    except OSError:
+        return None
+    return d if d and os.path.isdir(d) else None
+
+
+def _write_anchor(session: str, project_dir: str) -> None:
+    """Record the anchor atomically; never let a bookkeeping failure break a
+    save. Same-value writes are skipped so the common path does no disk I/O."""
+    if _read_anchor(session) == project_dir:
+        return
+    try:
+        path = _anchor_path(session)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(project_dir)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def _ledger_path(session: str) -> str:
-    return os.path.join(_state_dir(), f"{session}.jsonl")
+    d = os.path.join(_session_project_dir(session), ".claude", ".kittens-saved")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        # Fall back to the cwd-derived dir rather than failing the write.
+        d = _state_dir()
+    return os.path.join(d, f"{session}.jsonl")
 
 
 def _off_path(session: str) -> str:
@@ -826,6 +912,8 @@ def cmd_config(args) -> int:
             "session_enforcement": "off" if _is_off(session) else "on",
             "state_dir": _state_dir(),
             "global_dir": _global_dir(),
+            "ledger_dir": os.path.dirname(_ledger_path(session)),
+            "anchor": _read_anchor(session),
         }))
         return 0
     print("🐈 kittens-saved effective config")
@@ -834,6 +922,9 @@ def cmd_config(args) -> int:
     print(f"   session enforcement = {'off' if _is_off(session) else 'on'} (this session's .off marker)")
     print(f"   state dir (project) = {_state_dir()}")
     print(f"   state dir (global)  = {_global_dir()}  (mutes + deny/warn overrides)")
+    print(f"   ledger dir (session)= {os.path.dirname(_ledger_path(session))}")
+    anchor = _read_anchor(session)
+    print(f"   session anchor      = {anchor or '(none — resolving by cwd)'}")
     print("   change persistent config: /plugin configure kittens-saved@<marketplace>")
     print("   per-session mute:         /kittens toggle off")
     return 0
