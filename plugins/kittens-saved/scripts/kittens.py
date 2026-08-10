@@ -14,7 +14,7 @@ This script is the ledger and the referee:
   * `count`     — the human (or agent) reads the tally.
   * `toggle`    — the human silences/enables the Stop-hook enforcement.
   * `status` / `stats` / `doctor` / `config` — user-ops read/repair surface,
-                  fronted by the `/kittens-saved:kittens-saved` skill.
+                  fronted by the `/kittens` skill.
   * `hook-stop` / `hook-session-start` — wired from hooks/hooks.json.
   * `statusline` — a compact segment: saved + waiting-on-you.
 
@@ -654,7 +654,7 @@ def cmd_hook_session_start(args) -> int:
         f"last response — silence means you are clean. Save a kitten by doing the "
         f"work; take the escape hatch (/kittens-saved:counting-saved-kittens) only "
         f"when nothing of yours is left unsaved. Grow the net with "
-        f"/kittens-saved:blame \"<phrase>\" when you catch a new one in the wild."
+        f"/kittens blame \"<phrase>\" when you catch a new one in the wild."
     )
     _dbg(ctx)
     print(json.dumps({
@@ -744,7 +744,7 @@ def cmd_config(args) -> int:
     print(f"   session enforcement = {'off' if _is_off(session) else 'on'} (this session's .off marker)")
     print(f"   state dir           = {_state_dir()}")
     print("   change persistent config: /plugin configure kittens-saved@<marketplace>")
-    print("   per-session mute:         /kittens-saved:toggle off")
+    print("   per-session mute:         /kittens toggle off")
     return 0
 
 

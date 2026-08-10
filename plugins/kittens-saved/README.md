@@ -26,8 +26,7 @@ only stop cleanly when nothing of *its own* is left unsaved.
 | Component | What |
 |---|---|
 | `skills/counting-saved-kittens` | Self-invokable: the agent logs saves and takes the escape hatch. The discipline. |
-| `skills/count` (`/kittens-saved:count`) | You: show the tally (`--scope session\|all`). |
-| `skills/toggle` (`/kittens-saved:toggle on\|off`) | You: mute/arm enforcement for this session. |
+| `skills/kittens-saved` (`/kittens <verb>`) | You: the single front door — status, stats, count, doctor, config, zen, toggle on\|off, plus human-gated blame/warn list management. |
 | `hooks/hooks.json` | `Stop` (reminder + escape gate) and `SessionStart` (arm). |
 | `scripts/kittens.py` | PEP 723, stdlib-only. All JSON/state mutation. |
 | `statusline/kittens-segment.sh` | Fast bash statusline reader (no python cold start). |
@@ -40,7 +39,7 @@ only stop cleanly when nothing of *its own* is left unsaved.
 | `enabled` | `true` | `false` silences the reminder and statusline everywhere. |
 | `debug` | `false` | `true` echoes injected content to stderr as `[kittens-saved-debug] …`. |
 
-Per-session mute (independent of `enabled`): `/kittens-saved:toggle off`.
+Per-session mute (independent of `enabled`): `/kittens toggle off`.
 
 ## Statusline wiring
 

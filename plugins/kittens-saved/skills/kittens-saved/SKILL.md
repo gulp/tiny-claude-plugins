@@ -1,54 +1,109 @@
 ---
 name: kittens
 description: >
-  Front door to the kittens-saved plugin — reachable as bare /kittens (plus the
-  namespaced kittens). Inspect and repair, don't mutate the
-  ledger. Dispatches to status (is enforcement live + this session's tally),
-  stats (session vs project totals), doctor (health + config check, with --fix),
-  config (effective settings), denylist/warn (list the two tiers), and zen. Use
-  when the user runs /kittens, or asks "kitten status", "kitten stats", "kittens
-  doctor", "check the kittens plugin", "is kittens enforcing", "kitten config".
-  For saving a kitten or the escape hatch use counting-saved-kittens;
-  to silence a session use toggle.
-argument-hint: "[status|stats|doctor|config|denylist|warn|zen] [--fix] [--json]"
-allowed-tools: Bash(python3:*)
+  The single front door to the kittens-saved plugin — bare /kittens with a verb
+  argument. Read/inspect verbs: status (is enforcement live + tally), stats,
+  count, doctor (--fix), config, zen. Control verb: toggle on|off (silence THIS
+  session's reminder). List-management verbs (HUMAN-GATED adds): blame
+  (denylist of high-confidence punt phrases) and warn (soft warnlist of
+  style/sycophancy tells with reason+escape). Use when the user runs /kittens,
+  asks "kitten status/stats/count/tally", "kittens doctor/config", "kittens
+  on/off", "silence the kitten nudges", or wants to add/list/test denylist or
+  warnlist phrases ("blame this phrase", "warn on this tell"). For saving a
+  kitten or the escape hatch use counting-saved-kittens.
+argument-hint: "[status|stats|count|doctor|config|zen|toggle on|off|blame …|warn …] [--json]"
+allowed-tools: Bash(python3:*), AskUserQuestion
 disable-model-invocation: true
 ---
 
 # /kittens  (kittens-saved:kittens)
 
-The read/repair front door for the plugin. Run the bundled script with the
-requested action and **print its output verbatim** — do not reinterpret the
-numbers or the findings:
+One command, verb-dispatched. Run the bundled script with the requested verb
+and **print its output verbatim** — do not reinterpret numbers or findings:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py" $ARGUMENTS
 ```
 
-`$ARGUMENTS` is one of the ops subcommands (default to `status` when none is
-given, and infer from prose — "how are the kittens" → `status`, "why is the
-reminder off" → `doctor`, "kitten totals" → `stats`, "what's the scope set to"
-→ `config`):
+Default to `status` when no verb is given, and infer from prose — "how are the
+kittens" → `status`, "why is the reminder off" → `doctor`, "kitten totals" →
+`stats`, "kittens off" → `toggle off`, "blame this phrase" → the blame gate
+below.
+
+## Read / repair verbs
 
 - **`status`** — is enforcement actually live this session (global `enabled` ∧
   not per-session-muted), plus saved / waiting-on-you / still-yours.
 - **`stats`** — this session's total and this project's total (every ledger in
   the project). Box-level (all projects) is deliberately not tracked.
-- **`doctor`** — checks the state dir is writable and gitignored and reports the
-  effective config. `doctor --fix` applies only repairs the plugin owns (adds
-  the ephemeral ledger dir to `.gitignore`); it never edits settings files.
-- **`config`** — the effective `enabled` / `scope` / `debug` and where each
+- **`count [--scope session|all]`** — the tally; `session` also shows items
+  still waiting on the human and any the agent still owes.
+- **`doctor [--fix]`** — checks the state dir is writable and gitignored and
+  reports the effective config. `--fix` applies only repairs the plugin owns
+  (gitignores the ephemeral ledger dir); it never edits settings files.
+- **`config`** — effective `enabled` / `scope` / `debug` and where each
   resolved from, plus how to change them (`/plugin configure`).
+- **`zen`** — print the Zen of Kittens.
 
-Each subcommand takes `--json` for machine-readable output; run
-`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py" <action> --help` for its
-flags rather than restating them here.
+Read verbs take `--json` for machine-readable output; run
+`… <verb> --help` for flags rather than restating them here.
 
 **Exit codes** (surface, don't hide): `doctor` returns **1** when it found
-issues — that is the finding, not a broken command; report what it printed.
-**3** is an environment failure (state dir unwritable). **2** is a usage error.
-All other subcommands return **0**.
+issues — that is the finding, not a broken command. **3** is an environment
+failure (state dir unwritable). **2** is a usage error.
 
-This skill is **read/repair only** — it never records a kitten or takes the
-escape hatch. Those mutate the ledger and live in
+## `toggle on|off|status` — per-session mute
+
+Silences the Stop-hook reminder and the statusline segment for **this session
+only** (a marker file next to the session ledger); the ledger keeps recording.
+To disable the plugin everywhere, change the `enabled` plugin setting instead.
+
+## `blame …` — the denylist (high-confidence punt phrases)
+
+| form | does |
+|---|---|
+| `blame ls` | list entries — built-in defaults (read-only) + numbered overrides |
+| `blame test "<text>"` | dry-run the matcher: which patterns fire (writes nothing) |
+| `blame rm "<phrase>"` | remove an override entry (defaults can't be removed) |
+| `blame edit` | open the override file in `$EDITOR` (human at a terminal only) |
+| `blame add "<phrase>"` / bare `blame "<phrase>"` | add — **PREVIEW ONLY** unless `--yes` |
+
+`--regex` treats an added phrase as a pattern, not a literal. `ls`/`test` take
+`--json`.
+
+## `warn …` — the warnlist (soft tier)
+
+Lower-confidence **style/sycophancy** tells: a gentle `[i]` that *teaches*,
+never blocks, capped per session. Each entry is `{matcher, reason, escape}`.
+If a phrase is a coin-flip — it fires on honest behaviour as much as on a tell
+— it belongs here, not in the denylist.
+
+| form | does |
+|---|---|
+| `warn ls` | list entries — defaults (read-only) + numbered overrides |
+| `warn test "<text>"` / bare `warn "<text>"` | dry-run with reason/escape shown |
+| `warn rm "<matcher>"` | remove an override entry |
+| `warn add "<matcher>" --reason "…" --escape "…"` | add — **PREVIEW ONLY** unless `--yes` |
+
+## The gate — adds NEVER write blind
+
+`blame add` and `warn add` **preview and write nothing** without `--yes`, and
+**you must not pass `--yes` until the human has confirmed** the exact entry:
+
+1. **Tighten** the matcher to the shortest reusable phrase that captures the
+   tell — never a whole message blob (a 200-char pattern never re-matches).
+   For `warn`, also draft the one-line **reason** (why it reads as a tell) and
+   the **escape** (the honest case where it's fine).
+2. Run the **preview** and show its output.
+3. Confirm with **`AskUserQuestion`**, then re-run with `--yes`.
+
+For a multi-line blob with several candidate clauses: split into clauses, drop
+any that already trip (`blame test` each), tighten the hand-back-ish survivors,
+and present them as an `AskUserQuestion` **multi-select checklist** — the human
+ticks which to add; write each ticked phrase with `--yes`.
+
+## Boundary
+
+This skill is **read/repair/list-management only** — it never records a kitten
+or takes the escape hatch. Those mutate the ledger and live in
 `counting-saved-kittens`.

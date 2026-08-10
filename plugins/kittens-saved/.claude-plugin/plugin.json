@@ -1,6 +1,6 @@
 {
   "name": "kittens-saved",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Counts the kittens you save by doing the work instead of punting it, and gates the agent's escape hatch: you may only stop cleanly when nothing of yours is left unsaved. A TWO-TIER, evidence-gated Stop hook that reads THIS turn's message (bounded-wait, so the current turn not the previous) with context-aware matching that ignores code/quotes/blockquotes: a high-confidence DENYLIST fires an act-now nudge (grow it with the human-gated `blame` grammar), and a soft WARNLIST fires a gentle [i] reminder carrying a reason and an escape-condition, capped per session (grow it with `warn`). Plus a startup primer with the Zen of Kittens, a JSONL ledger, ops commands (status/stats/doctor/config), and a statusline segment.",
   "author": {
     "name": "Yekta Gurel",
@@ -17,13 +17,13 @@
     "scope": {
       "type": "string",
       "title": "Tally scope",
-      "description": "Whether the statusline and the default `/kittens-saved:count` show kittens saved in this session only, or across all sessions. One of: session, all.",
+      "description": "Whether the statusline and the default `/kittens count` show kittens saved in this session only, or across all sessions. One of: session, all.",
       "default": "session"
     },
     "enabled": {
       "type": "string",
       "title": "Enabled",
-      "description": "Set to false to silence the Stop-hook reminder and the statusline segment everywhere. Per-session control is /kittens-saved:toggle off.",
+      "description": "Set to false to silence the Stop-hook reminder and the statusline segment everywhere. Per-session control is /kittens toggle off.",
       "default": "true"
     },
     "debug": {
