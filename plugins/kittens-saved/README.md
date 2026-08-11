@@ -12,6 +12,15 @@ only stop cleanly when nothing of *its own* is left unsaved.
   kitten-reminder and the running tally. If the agent declared residual work
   that was *its own* to finish, the hook blocks the stop once and feeds the
   reminder back.
+- **Nudges are addressed to the agent, and shown to you.** The two
+  non-blocking tiers (deny and warn) emit their text on **both**
+  `hookSpecificOutput.additionalContext` — the only field Claude Code injects
+  back into the model — and `systemMessage`, which renders to you. This is not
+  redundancy. `systemMessage` **alone is a no-op for the tier's actual target**:
+  it reaches the human, who then has to relay it by hand. That was a real bug,
+  found live when a human relayed one, and it hid behind the blocking tier,
+  which uses `decision: block` + `reason` and always did reach the model. Tests:
+  `scripts/test_kittens_nudge_reaches_model.py`.
 - **Escape hatch (agent-only).** Before ending a turn with leftovers, the agent
   runs `/kittens-saved:counting-saved-kittens` and declares its residual as
   `--mine K --yours M`. Granted only when `K == 0` — i.e. it left nothing of its

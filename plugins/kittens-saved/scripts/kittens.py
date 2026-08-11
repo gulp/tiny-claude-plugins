@@ -729,6 +729,31 @@ def cmd_toggle(args) -> int:
     return 0
 
 
+def _nudge(text: str) -> dict:
+    """A non-blocking Stop-hook nudge, addressed to BOTH audiences.
+
+    `systemMessage` alone was a silent no-op for its actual target. Claude
+    Code's own contract: `systemMessage` — "Display a message to the user (all
+    hooks)"; `hookSpecificOutput.additionalContext` — "Context injected back to
+    model". So a nudge carried on `systemMessage` only ever reached the human,
+    who then had to relay it by hand — observed live, and the reason this
+    helper exists. The escape-block tier never had the bug because
+    `decision: block` + `reason` does reach the model, which is exactly what
+    made the gap hard to see: one tier worked, so the channel looked fine.
+
+    Both fields are sent deliberately, not belt-and-braces. They have different
+    audiences and the human seeing what the agent was told is the point of a
+    nudge tier that does not block."""
+    return {
+        "continue": True,
+        "systemMessage": text,
+        "hookSpecificOutput": {
+            "hookEventName": "Stop",
+            "additionalContext": text,
+        },
+    }
+
+
 def cmd_hook_stop(args) -> int:
     """Stop hook — EVIDENCE-GATED. It stays silent unless it has a reason to
     speak, so it never piles up on a clean turn (the every-stop reminder was the
@@ -784,14 +809,14 @@ def cmd_hook_stop(args) -> int:
             f"/kittens-saved:counting-saved-kittens (mine=0)."
         )
         _dbg(system_message)
-        print(json.dumps({"continue": True, "systemMessage": system_message}))
+        print(json.dumps(_nudge(system_message)))
         return 0
 
     # 2b. Warn tier — a gentle [i] on a softer tell, capped per session, never blocks.
     warn = _warn_check(session, resp)
     if warn:
         _dbg(warn)
-        print(json.dumps({"continue": True, "systemMessage": warn}))
+        print(json.dumps(_nudge(warn)))
         return 0
 
     # 3. Clean stop — silent. No hit, no nag.

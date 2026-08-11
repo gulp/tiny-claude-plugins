@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""The Stop-hook nudge must reach the AGENT, not only the human.
+
+Regression test for a silent no-op found live: both non-blocking tiers (deny
+and warn) emitted their nudge on `systemMessage` alone. Claude Code's contract
+for hook output is explicit that these are different audiences:
+
+    systemMessage          -> "Display a message to the user (all hooks)"
+    additionalContext      -> "Context injected back to model"
+
+So the nudge rendered in the human's transcript and never entered the agent's
+context. The human had to relay it by hand — which is exactly what happened,
+and is how it was found. Note why it stayed hidden: the escape-block tier uses
+`decision: block` + `reason`, which DOES reach the model, so one tier worked
+and the channel looked healthy.
+
+These tests assert the OUTPUT SHAPE of the hook rather than the wording, so
+they survive edits to the nudge text. Every test runs against a throwaway HOME
+and a throwaway transcript; none may touch the real ~/.claude.
+"""
+from __future__ import annotations
+
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import shutil
+import tempfile
+import threading
+import time
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SPEC = importlib.util.spec_from_file_location("kittens_nudge", os.path.join(HERE, "kittens.py"))
+ks = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(ks)
+
+SESSION = "sess-nudge-probe"
+
+# A phrase that must trip the deny tier, and a softer one that must trip only
+# the warn tier. Both are matched by BUILT-IN defaults on purpose: HOME is a
+# throwaway here, so the operator's deny/warn overrides are deliberately not
+# loaded and a fixture leaning on one would pass on the author's box and fail
+# everywhere else. (Found the hard way — the first fixture phrase came from the
+# author's own overrides and matched nothing in the sandbox.)
+#
+# Each is guarded by a test asserting it still fires, so retiring a default
+# fails loudly there instead of silently turning these tests vacuous.
+DENY_PHRASE = "I left the rest for you"
+WARN_PHRASE = "I deliberately did not touch the second item"
+
+
+def _msg(uuid: str, text: str) -> str:
+    return json.dumps({
+        "type": "assistant",
+        "uuid": uuid,
+        "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+    }) + "\n"
+
+
+class NudgeBase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="kittens-nudge-test-")
+        self.home = os.path.join(self.tmp, "home")
+        self.proj = os.path.join(self.tmp, "proj")
+        for d in (self.home, self.proj):
+            os.makedirs(os.path.join(d, ".claude"), exist_ok=True)
+        self._env = {k: os.environ.get(k)
+                     for k in ("HOME", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_SESSION_ID")}
+        os.environ["HOME"] = self.home
+        os.environ["CLAUDE_PROJECT_DIR"] = self.proj
+        os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        self.transcript = os.path.join(self.tmp, "transcript.jsonl")
+
+    def tearDown(self):
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_stop(self, final_text: str) -> dict:
+        """Drive cmd_hook_stop end to end and return its parsed JSON.
+
+        `_current_response_text` deliberately waits for a message NEWER than the
+        one present at entry, because at real Stop time the ending turn is often
+        not flushed yet. So the fixture must reproduce that: seed a previous
+        turn, then append the ending turn while the hook is already waiting.
+        Seeding both up front would exercise the wrong path — the hook would
+        see no new message and stay silent, and every assertion here would pass
+        vacuously on an empty response.
+        """
+        with open(self.transcript, "w", encoding="utf-8") as fh:
+            fh.write(_msg("u-prev", "a previous, clean turn"))
+
+        def append_later():
+            time.sleep(0.4)
+            with open(self.transcript, "a", encoding="utf-8") as fh:
+                fh.write(_msg("u-final", final_text))
+
+        writer = threading.Thread(target=append_later)
+        writer.start()
+        try:
+            payload = json.dumps({"session_id": SESSION, "transcript_path": self.transcript})
+            args = type("A", (), {"session": SESSION})()
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), _stdin(payload):
+                ks.cmd_hook_stop(args)
+        finally:
+            writer.join()
+        return json.loads(buf.getvalue())
+
+
+@contextlib.contextmanager
+def _stdin(text: str):
+    import sys
+    old = sys.stdin
+    sys.stdin = io.StringIO(text)
+    try:
+        yield
+    finally:
+        sys.stdin = old
+
+
+class TestNudgeShape(unittest.TestCase):
+    """Unit-level: the helper itself addresses both audiences."""
+
+    def test_nudge_carries_additional_context_for_the_model(self):
+        out = ks._nudge("some text")
+        self.assertEqual(
+            out.get("hookSpecificOutput", {}).get("additionalContext"), "some text",
+            "the nudge must be injected back to the model; systemMessage alone "
+            "renders only to the human and is a no-op for its actual target")
+
+    def test_nudge_still_shows_the_human_what_the_agent_was_told(self):
+        out = ks._nudge("some text")
+        self.assertEqual(out.get("systemMessage"), "some text",
+                         "both audiences, deliberately — a non-blocking tier is "
+                         "only auditable if the human sees what the agent saw")
+
+    def test_nudge_names_the_stop_event(self):
+        # hookSpecificOutput without a matching hookEventName is rejected;
+        # Claude Code's own error text asks "Did you mean
+        # hookSpecificOutput.additionalContext (with a hookEventName)?"
+        self.assertEqual(ks._nudge("x")["hookSpecificOutput"]["hookEventName"], "Stop")
+
+    def test_nudge_does_not_block(self):
+        self.assertTrue(ks._nudge("x")["continue"])
+        self.assertNotIn("decision", ks._nudge("x"),
+                         "the nudge tiers must never block; blocking is the "
+                         "denied-escape path and has its own anti-trap counter")
+
+
+class TestDenyTierReachesModel(NudgeBase):
+    def test_the_fixture_phrase_actually_trips(self):
+        # Guards every other test in this file: if the denylist stops matching
+        # DENY_PHRASE, the deny-tier tests would silently start asserting
+        # against a clean-stop response instead of a nudge.
+        self.assertTrue(ks._lazy_hits(DENY_PHRASE),
+                        f"fixture phrase no longer on the denylist: {DENY_PHRASE!r}")
+
+    def test_deny_tier_injects_context(self):
+        out = self.run_stop(f"All done. {DENY_PHRASE}.")
+        ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("lazy-handoff tell", ctx,
+                      "the deny nudge never reached the agent — this is the "
+                      "exact regression: user-visible, agent-invisible")
+
+    def test_deny_tier_names_the_phrase_that_fired(self):
+        out = self.run_stop(f"All done. {DENY_PHRASE}.")
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        hit = ks._lazy_hits(DENY_PHRASE)[0]
+        self.assertIn(hit, ctx,
+                      "a nudge that will not say which phrase fired cannot be "
+                      "acted on, only apologised for")
+
+    def test_warn_tier_also_reaches_the_model(self):
+        # The warn tier had the SAME bug and is easy to forget, because it is
+        # the quieter of the two and its whole purpose is to teach — a lesson
+        # delivered only to the human teaches the wrong party.
+        self.assertFalse(ks._lazy_hits(WARN_PHRASE),
+                         "WARN_PHRASE must NOT be on the denylist, or this test "
+                         "silently re-tests the deny tier")
+        out = self.run_stop(f"All done. {WARN_PHRASE}.")
+        ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("[i]", ctx, "the warn nudge never reached the agent")
+
+    def test_clean_turn_stays_silent(self):
+        # The other side of the gate. Without this, a hook that nudged on every
+        # stop would pass every assertion above.
+        out = self.run_stop("Done. Everything landed and the tests are green.")
+        self.assertNotIn("hookSpecificOutput", out)
+        self.assertTrue(out.get("suppressOutput"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
