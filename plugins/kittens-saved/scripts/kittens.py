@@ -743,7 +743,17 @@ def _nudge(text: str) -> dict:
 
     Both fields are sent deliberately, not belt-and-braces. They have different
     audiences and the human seeing what the agent was told is the point of a
-    nudge tier that does not block."""
+    nudge tier that does not block.
+
+    That a NON-blocking Stop hook can inject context at all is the load-bearing
+    assumption, so it is quoted rather than assumed — Claude Code 2.1.227's own
+    schema description for the Stop event:
+
+        "additionalContext is non-error feedback delivered to the model; the
+         conversation continues so the model can act on it."
+
+    `hookEventName` is required alongside it; the harness rejects a bare
+    `hookSpecificOutput` and asks for it by name."""
     return {
         "continue": True,
         "systemMessage": text,

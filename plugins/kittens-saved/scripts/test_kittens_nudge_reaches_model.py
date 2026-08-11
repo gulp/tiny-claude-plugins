@@ -17,6 +17,21 @@ and the channel looked healthy.
 These tests assert the OUTPUT SHAPE of the hook rather than the wording, so
 they survive edits to the nudge text. Every test runs against a throwaway HOME
 and a throwaway transcript; none may touch the real ~/.claude.
+
+WHAT THESE TESTS CANNOT REACH, stated because the omission is the same shape as
+the bug: they verify what the hook EMITS, not that Claude Code delivers it. No
+in-process test can — the consumer is the harness. The delivery guarantee rests
+on the documented schema for the Stop event, quoted verbatim from the 2.1.227
+binary so a future reader need not re-derive it:
+
+    "Hook-specific output for the Stop event. additionalContext is non-error
+     feedback delivered to the model; the conversation continues so the model
+     can act on it."
+
+If a future Claude Code drops or renames that field, every test here stays
+green and the nudge silently stops arriving again. The check that would catch
+it is an integration one — a real session, a real tell, and the agent visibly
+responding — and it belongs in a release smoke test, not here.
 """
 from __future__ import annotations
 
@@ -26,6 +41,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -33,8 +49,13 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPEC = importlib.util.spec_from_file_location("kittens_nudge", os.path.join(HERE, "kittens.py"))
+# Asserted rather than assumed: spec_from_file_location returns None for a
+# missing/unloadable path, and the resulting AttributeError several lines later
+# reads as a mystery instead of "kittens.py is not where this test expects".
+assert SPEC is not None and SPEC.loader is not None, f"cannot load kittens.py from {HERE}"
 ks = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ks)
+
 
 SESSION = "sess-nudge-probe"
 
@@ -57,6 +78,18 @@ def _msg(uuid: str, text: str) -> str:
         "uuid": uuid,
         "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
     }) + "\n"
+
+
+@contextlib.contextmanager
+def _stdin(text: str):
+    """Feed the hook its payload. It reads real stdin, and the stdlib has no
+    `redirect_stdin` to pair with `redirect_stdout`, so this stands in for one."""
+    old = sys.stdin
+    sys.stdin = io.StringIO(text)
+    try:
+        yield
+    finally:
+        sys.stdin = old
 
 
 class NudgeBase(unittest.TestCase):
@@ -91,37 +124,49 @@ class NudgeBase(unittest.TestCase):
         Seeding both up front would exercise the wrong path — the hook would
         see no new message and stay silent, and every assertion here would pass
         vacuously on an empty response.
+
+        The writer is gated on an Event rather than a bare sleep. If it were
+        free to run the moment it was started, a descheduled main thread could
+        let the final message land BEFORE the hook reads its baseline — and the
+        hook would then see nothing new and stay silent. That flake is not
+        symmetric, which is what makes it worth closing: the nudge tests would
+        fail loudly, but `test_clean_turn_stays_silent` would PASS, for the
+        wrong reason.
         """
         with open(self.transcript, "w", encoding="utf-8") as fh:
             fh.write(_msg("u-prev", "a previous, clean turn"))
 
+        hook_entered = threading.Event()
+
         def append_later():
-            time.sleep(0.4)
+            # Bounded: never wedge the suite if the hook raises before setting.
+            if not hook_entered.wait(timeout=5.0):
+                return
+            time.sleep(0.2)  # let the hook reach its baseline read
             with open(self.transcript, "a", encoding="utf-8") as fh:
                 fh.write(_msg("u-final", final_text))
+
+        payload = json.dumps({"session_id": SESSION, "transcript_path": self.transcript})
+        args = type("A", (), {"session": SESSION})()
+        buf = io.StringIO()
 
         writer = threading.Thread(target=append_later)
         writer.start()
         try:
-            payload = json.dumps({"session_id": SESSION, "transcript_path": self.transcript})
-            args = type("A", (), {"session": SESSION})()
-            buf = io.StringIO()
             with contextlib.redirect_stdout(buf), _stdin(payload):
+                hook_entered.set()
                 ks.cmd_hook_stop(args)
         finally:
-            writer.join()
-        return json.loads(buf.getvalue())
+            hook_entered.set()  # release the writer even if the hook raised
+            writer.join(timeout=10.0)
 
-
-@contextlib.contextmanager
-def _stdin(text: str):
-    import sys
-    old = sys.stdin
-    sys.stdin = io.StringIO(text)
-    try:
-        yield
-    finally:
-        sys.stdin = old
+        raw = buf.getvalue().strip()
+        # The hook is contractually required to print exactly one JSON object on
+        # every path, including the silent one (`suppressOutput`). Saying so here
+        # turns "printed nothing" into that sentence rather than a bare
+        # JSONDecodeError several frames away from the cause.
+        self.assertTrue(raw, "the Stop hook printed nothing; it must always emit a JSON verdict")
+        return json.loads(raw)
 
 
 class TestNudgeShape(unittest.TestCase):
@@ -151,6 +196,41 @@ class TestNudgeShape(unittest.TestCase):
         self.assertNotIn("decision", ks._nudge("x"),
                          "the nudge tiers must never block; blocking is the "
                          "denied-escape path and has its own anti-trap counter")
+
+    def test_nudge_is_json_serialisable(self):
+        # The hook's only output channel is json.dumps to stdout. A non-encodable
+        # value here would surface as a traceback at Stop time, i.e. a broken
+        # hook, not a missing nudge.
+        self.assertEqual(json.loads(json.dumps(ks._nudge("x")))["systemMessage"], "x")
+
+
+class TestBlockingTierIsUnchanged(NudgeBase):
+    """The escape-block tier is the one that ALREADY reached the model, via
+    `decision: block` + `reason`. It is not a nudge and must not become one —
+    a refactor that routed it through `_nudge()` would silently delete the gate
+    this plugin exists to enforce, and every nudge test above would still pass.
+    """
+
+    def _deny_escape(self, mine: int = 2):
+        ks._append(SESSION, {"kind": "escape", "mine": mine, "yours": 0, "granted": False})
+
+    def test_denied_escape_still_blocks(self):
+        self._deny_escape()
+        out = self.run_stop("Done, but I have unsaved work of my own.")
+        self.assertEqual(out.get("decision"), "block",
+                         "a denied escape must block the stop, not merely nudge")
+        self.assertIn("reason", out, "a block without a reason is unactionable")
+
+    def test_block_releases_on_the_next_stop(self):
+        # The anti-trap counter: blocking twice in a row would strand the agent
+        # with no way to end its turn. Asserted here because this test file is
+        # where someone will come to change stop-hook output shapes.
+        self._deny_escape()
+        self.run_stop("First stop — expected to be blocked.")
+        out = self.run_stop("Second stop — must be allowed through.")
+        self.assertNotEqual(out.get("decision"), "block",
+                            "the block must fire at most once; a second block "
+                            "traps the agent with no exit")
 
 
 class TestDenyTierReachesModel(NudgeBase):
