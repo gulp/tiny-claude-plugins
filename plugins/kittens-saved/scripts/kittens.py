@@ -520,17 +520,32 @@ def _lazy_hits(text: str) -> list:
     return out
 
 
-def _last_assistant_sig(transcript_path):
-    """(signature, text) of the last assistant text message — signature a cheap
-    change-detector (its timestamp, else a text prefix); ('', '') if none. Lets
-    the Stop hook tell the message that was ALREADY there from the one this turn
-    just produced."""
+def _response_after_last_user(transcript_path):
+    """(ready, text) for the assistant text of the turn that is ENDING.
+
+    `ready` is True when the last assistant text record sits AFTER the last
+    record from the user side — i.e. the agent has spoken since the last thing
+    that came in. That is what "this turn's response" means, and it is decided
+    by POSITION in the transcript, never by wall-clock or by change-detection.
+
+    Position is the whole point (see `_current_response_text`). Within a turn,
+    tool results interleave as user-side records, and the closing assistant
+    text always follows the last of them; across turns, a fresh human message
+    resets the boundary. So the same rule both finds the ending turn and
+    refuses to read one turn behind.
+
+    Sidechain (subagent) records are skipped on both sides: a subagent's text
+    is not this turn's response, and letting it move the boundary would nudge
+    on words the main agent never said.
+    """
     if not transcript_path or not os.path.exists(transcript_path):
-        return ("", "")
-    sig, text = "", ""
+        return (False, "")
+    last_user = -1
+    last_assistant = -1
+    text = ""
     try:
         with open(transcript_path, encoding="utf-8") as fh:
-            for line in fh:
+            for i, line in enumerate(fh):
                 line = line.strip()
                 if not line:
                     continue
@@ -538,7 +553,13 @@ def _last_assistant_sig(transcript_path):
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if obj.get("type") != "assistant":
+                if obj.get("isSidechain"):
+                    continue
+                kind = obj.get("type")
+                if kind == "user":
+                    last_user = i
+                    continue
+                if kind != "assistant":
                     continue
                 content = (obj.get("message") or {}).get("content")
                 parts = []
@@ -548,29 +569,48 @@ def _last_assistant_sig(transcript_path):
                 elif isinstance(content, str):
                     parts = [content]
                 if parts:
+                    last_assistant = i
                     text = "\n".join(parts)
-                    sig = str(obj.get("timestamp") or text[:48])
     except OSError:
-        return ("", "")
-    return (sig, text)
+        return (False, "")
+    if last_assistant < 0 or last_assistant < last_user:
+        return (False, "")
+    return (True, text)
 
 
 def _current_response_text(transcript_path, max_wait: float = 3.0, poll: float = 0.25) -> str:
-    """The assistant text of the turn that is ENDING. At Stop time the current
-    message is often NOT flushed to the transcript yet — reading it naively
-    returns the PREVIOUS turn (verified 2026-08-09 live: the Stop hook otherwise
-    sees one turn behind). So wait, bounded, for a message NEWER than the one
-    present at entry. Return '' if nothing newer flushes within `max_wait` — the
-    caller then stays silent rather than nudge on the previous turn (no false
-    positive on a clean turn that merely followed a punt)."""
-    base_sig, _ = _last_assistant_sig(transcript_path)
+    """The assistant text of the turn that is ENDING, or '' if it never lands.
+
+    At Stop time the ending turn may or may not be flushed yet, and BOTH
+    orderings are ordinary. The previous implementation waited for a message
+    NEWER than the one present at entry, which handled the late flush and
+    silently broke the early one: when the response had already landed before
+    the hook started, nothing newer ever arrived, it burned the full `max_wait`
+    and returned ''. Firing became a coin flip on flush timing — long responses
+    (which finish writing sooner relative to the hook) were exactly the ones
+    that went unnudged. Found live 2026-08-13: a response tripping a built-in
+    denylist phrase stopped in silence, transcript written 1.3s before the hook
+    stamped.
+
+    Asking "is the last assistant message after the last user message" is
+    correct under both orderings, so the wait is now only for the not-yet-
+    flushed case and the common case returns immediately.
+    """
+    # No transcript at all is a settled answer, not a slow one — the harness
+    # passes no path on some Stop payloads, and waiting cannot conjure a file.
+    # Polling it anyway cost `max_wait` on every such stop.
+    if not transcript_path or not os.path.exists(transcript_path):
+        return ""
+    ready, text = _response_after_last_user(transcript_path)
+    if ready:
+        return text
     waited = 0.0
     while waited < max_wait:
-        sig, text = _last_assistant_sig(transcript_path)
-        if sig and sig != base_sig:
-            return text
         time.sleep(poll)
         waited += poll
+        ready, text = _response_after_last_user(transcript_path)
+        if ready:
+            return text
     return ""
 
 

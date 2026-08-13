@@ -80,6 +80,33 @@ def _msg(uuid: str, text: str) -> str:
     }) + "\n"
 
 
+def _user(uuid: str, text: str = "go on") -> str:
+    """A user-side record — the thing that delimits one turn from the next.
+
+    Fixtures here must include these. The hook decides which assistant message
+    belongs to the ending turn by asking whether it comes after the last
+    user-side record, so an assistant-only transcript is not a smaller version
+    of a real one; it is a shape the hook cannot reason about.
+    """
+    return json.dumps({
+        "type": "user",
+        "uuid": uuid,
+        "message": {"role": "user", "content": text},
+    }) + "\n"
+
+
+def _tool_result(uuid: str, tool_use_id: str = "toolu_1") -> str:
+    """A tool result — also a user-side record, and the reason the turn
+    boundary cannot simply be "the last user record": these land mid-turn."""
+    return json.dumps({
+        "type": "user",
+        "uuid": uuid,
+        "message": {"role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": tool_use_id,
+                                 "content": "ok"}]},
+    }) + "\n"
+
+
 @contextlib.contextmanager
 def _stdin(text: str):
     """Feed the hook its payload. It reads real stdin, and the stdlib has no
@@ -114,27 +141,51 @@ class NudgeBase(unittest.TestCase):
                 os.environ[k] = v
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def _drive(self) -> dict:
+        """Run cmd_hook_stop against the transcript as it currently stands."""
+        payload = json.dumps({"session_id": SESSION, "transcript_path": self.transcript})
+        args = type("A", (), {"session": SESSION})()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), _stdin(payload):
+            ks.cmd_hook_stop(args)
+        raw = buf.getvalue().strip()
+        # The hook is contractually required to print exactly one JSON object on
+        # every path, including the silent one (`suppressOutput`). Saying so here
+        # turns "printed nothing" into that sentence rather than a bare
+        # JSONDecodeError several frames away from the cause.
+        self.assertTrue(raw, "the Stop hook printed nothing; it must always emit a JSON verdict")
+        return json.loads(raw)
+
     def run_stop(self, final_text: str) -> dict:
-        """Drive cmd_hook_stop end to end and return its parsed JSON.
+        """Drive cmd_hook_stop end to end with the ending turn ALREADY flushed.
 
-        `_current_response_text` deliberately waits for a message NEWER than the
-        one present at entry, because at real Stop time the ending turn is often
-        not flushed yet. So the fixture must reproduce that: seed a previous
-        turn, then append the ending turn while the hook is already waiting.
-        Seeding both up front would exercise the wrong path — the hook would
-        see no new message and stay silent, and every assertion here would pass
-        vacuously on an empty response.
+        This is the ordinary case at real Stop time, and until 2026-08-13 it was
+        the case the hook could not see: it waited for a message newer than the
+        one present at entry, so a response that had already landed left it
+        waiting for something that never came. The old fixture here reproduced
+        only the late flush — with a threading.Event to force that interleaving
+        — and so stayed green across the entire lifetime of the bug.
 
-        The writer is gated on an Event rather than a bare sleep. If it were
-        free to run the moment it was started, a descheduled main thread could
-        let the final message land BEFORE the hook reads its baseline — and the
-        hook would then see nothing new and stay silent. That flake is not
-        symmetric, which is what makes it worth closing: the nudge tests would
-        fail loudly, but `test_clean_turn_stays_silent` would PASS, for the
-        wrong reason.
+        Seeding everything up front is therefore not a simplification; it is the
+        regression. `run_stop_late_flush` covers the other ordering.
         """
         with open(self.transcript, "w", encoding="utf-8") as fh:
-            fh.write(_msg("u-prev", "a previous, clean turn"))
+            fh.write(_user("u-prev-ask"))
+            fh.write(_msg("a-prev", "a previous, clean turn"))
+            fh.write(_user("u-ask"))
+            fh.write(_msg("a-final", final_text))
+        return self._drive()
+
+    def run_stop_late_flush(self, final_text: str) -> dict:
+        """The other ordering: the ending turn lands while the hook is waiting.
+
+        The writer is gated on an Event rather than a bare sleep so the
+        interleaving is forced rather than hoped for.
+        """
+        with open(self.transcript, "w", encoding="utf-8") as fh:
+            fh.write(_user("u-prev-ask"))
+            fh.write(_msg("a-prev", "a previous, clean turn"))
+            fh.write(_user("u-ask"))
 
         hook_entered = threading.Event()
 
@@ -142,9 +193,9 @@ class NudgeBase(unittest.TestCase):
             # Bounded: never wedge the suite if the hook raises before setting.
             if not hook_entered.wait(timeout=5.0):
                 return
-            time.sleep(0.2)  # let the hook reach its baseline read
+            time.sleep(0.2)
             with open(self.transcript, "a", encoding="utf-8") as fh:
-                fh.write(_msg("u-final", final_text))
+                fh.write(_msg("a-final", final_text))
 
         payload = json.dumps({"session_id": SESSION, "transcript_path": self.transcript})
         args = type("A", (), {"session": SESSION})()
@@ -161,12 +212,98 @@ class NudgeBase(unittest.TestCase):
             writer.join(timeout=10.0)
 
         raw = buf.getvalue().strip()
-        # The hook is contractually required to print exactly one JSON object on
-        # every path, including the silent one (`suppressOutput`). Saying so here
-        # turns "printed nothing" into that sentence rather than a bare
-        # JSONDecodeError several frames away from the cause.
         self.assertTrue(raw, "the Stop hook printed nothing; it must always emit a JSON verdict")
         return json.loads(raw)
+
+
+class TestTurnBoundary(unittest.TestCase):
+    """Which assistant message is "this turn's response".
+
+    Regression for a silent no-op found live 2026-08-13: the hook waited for a
+    message NEWER than the one present at entry, so it only ever saw a response
+    that flushed AFTER it started. A response already on disk — the ordinary
+    outcome for a long one — left it waiting out `max_wait` and returning '',
+    and the nudge never fired. Firing was a coin flip on flush timing.
+
+    Position in the transcript decides it: the last assistant text record must
+    come after the last user-side record. That is true under both flush
+    orderings, which is the property the old change-detector lacked.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="kittens-turn-test-")
+        self.t = os.path.join(self.tmp, "transcript.jsonl")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, *records: str):
+        with open(self.t, "w", encoding="utf-8") as fh:
+            for r in records:
+                fh.write(r)
+
+    def test_already_flushed_response_is_seen(self):
+        # THE regression. Before the fix this returned '' after a 3s stall.
+        self._write(_user("u1"), _msg("a1", "the ending turn"))
+        self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "the ending turn")
+
+    def test_already_flushed_response_returns_without_waiting(self):
+        # The stall was not just wrong, it was 3s on every clean stop.
+        self._write(_user("u1"), _msg("a1", "done"))
+        started = time.monotonic()
+        ks._current_response_text(self.t, max_wait=3.0)
+        self.assertLess(time.monotonic() - started, 0.5,
+                        "an already-flushed response must not wait for a newer one")
+
+    def test_unflushed_turn_reads_silent_not_one_turn_behind(self):
+        # The 2026-08-09 failure this must not reintroduce: the previous turn's
+        # text is present, the ending turn is not. Nudging here would fire on
+        # words from a turn the human has already seen answered.
+        self._write(_user("u1"), _msg("a1", "previous turn"), _user("u2"))
+        self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "")
+
+    def test_late_flush_is_still_picked_up(self):
+        self._write(_user("u1"), _msg("a1", "previous turn"), _user("u2"))
+
+        def append_later():
+            time.sleep(0.3)
+            with open(self.t, "a", encoding="utf-8") as fh:
+                fh.write(_msg("a2", "the late one"))
+
+        w = threading.Thread(target=append_later)
+        w.start()
+        try:
+            self.assertEqual(ks._current_response_text(self.t, max_wait=3.0), "the late one")
+        finally:
+            w.join(timeout=5.0)
+
+    def test_mid_turn_tool_results_do_not_hide_the_response(self):
+        # Tool results are user-side records that land mid-turn. The closing
+        # assistant text follows them, so the boundary still resolves.
+        self._write(_user("u1"), _msg("a1", "thinking out loud"),
+                    _tool_result("tr1"), _msg("a2", "the closing word"))
+        self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "the closing word")
+
+    def test_a_subagents_words_are_not_this_turns_response(self):
+        sidechain = json.loads(_msg("s1", "a subagent said this"))
+        sidechain["isSidechain"] = True
+        self._write(_user("u1"), _msg("a1", "the real response"),
+                    json.dumps(sidechain) + "\n")
+        self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "the real response")
+
+    def test_missing_transcript_returns_immediately(self):
+        started = time.monotonic()
+        self.assertEqual(ks._current_response_text(None, max_wait=3.0), "")
+        self.assertEqual(ks._current_response_text(self.t + ".nope", max_wait=3.0), "")
+        self.assertLess(time.monotonic() - started, 0.5,
+                        "a missing transcript is known immediately; waiting cannot help")
+
+    def test_torn_line_does_not_abort_the_scan(self):
+        with open(self.t, "w", encoding="utf-8") as fh:
+            fh.write(_user("u1"))
+            fh.write("{ half a line\n")
+            fh.write(_msg("a1", "survived"))
+        self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "survived")
 
 
 class TestNudgeShape(unittest.TestCase):

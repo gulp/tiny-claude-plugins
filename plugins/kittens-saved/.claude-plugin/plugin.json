@@ -1,6 +1,6 @@
 {
   "name": "kittens-saved",
-  "version": "0.7.2",
+  "version": "0.8.2",
   "description": "Counts the kittens you save by doing the work instead of punting it, and gates the agent's escape hatch: you may only stop cleanly when nothing of yours is left unsaved. A TWO-TIER, evidence-gated Stop hook that reads THIS turn's message (bounded-wait, so the current turn not the previous) with context-aware matching that ignores code/quotes/blockquotes: a high-confidence DENYLIST fires an act-now nudge (grow it with the human-gated `blame` grammar), and a soft WARNLIST fires a gentle [i] reminder carrying a reason and an escape-condition, capped per session (grow it with `warn`). Plus a startup primer with the Zen of Kittens, a JSONL ledger, ops commands (status/stats/doctor/config), and a statusline segment.",
   "author": {
     "name": "Yekta Gurel",
