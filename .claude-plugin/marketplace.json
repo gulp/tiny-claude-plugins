@@ -39,7 +39,7 @@
       "name": "ultraralph",
       "source": "./plugins/ultraralph",
       "displayName": "Ultraralph",
-      "description": "The ceremony of handing a failed rubric to muscle: /ultraralph:vanilla start @<record.json> consumes the escalation record ultragoal writes on expiry and hands it to the ultraloop engine (a ralph engine, after Geoff Huntley's technique) as a self-contained bed mode — adopt-if-present bed, own limits, record kept as audit trail. Zero loop logic: doctor for presence, files for seams; if the engine is absent the skills print the install line, never an inline loop.",
+      "description": "The ceremony of handing a failed rubric to muscle: /ultraralph:vanilla start @<record.json> consumes the escalation record ultragoal writes on expiry and hands it to the ultraloop engine (a ralph engine, after Geoff Huntley's technique) as a self-contained bed mode \u2014 adopt-if-present bed, own limits, record kept as audit trail. Zero loop logic: doctor for presence, files for seams; if the engine is absent the skills print the install line, never an inline loop.",
       "category": "automation",
       "tags": [
         "escalation",
@@ -89,6 +89,20 @@
         "statusline",
         "escape-hatch",
         "kittens"
+      ]
+    },
+    {
+      "name": "drunk",
+      "source": "./plugins/drunk",
+      "displayName": "Drunk",
+      "description": "Explain to a reader who knows the domain but has no bandwidth left: answer in the first sentence, arithmetic already done, one thing at a time. The opposite of an ELI5 \u2014 short is respectful, simple is insulting. Doubles as an audit lens, since prose that survives an impaired reader survives a long-context agent.",
+      "category": "workflow",
+      "tags": [
+        "explain",
+        "accessibility",
+        "cognitive-load",
+        "prose",
+        "usability"
       ]
     }
   ]

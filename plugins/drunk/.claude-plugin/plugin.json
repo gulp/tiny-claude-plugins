@@ -1,0 +1,11 @@
+{
+  "name": "drunk",
+  "version": "0.1.0",
+  "description": "Explain to someone who knows the domain but has no bandwidth left — answer in the first sentence, arithmetic already done, one thing at a time. Doubles as an audit lens: prose that survives an impaired reader survives a long-context agent.",
+  "author": {
+    "name": "Yekta Gurel",
+    "email": "me@yektagurel.com"
+  },
+  "license": "MIT",
+  "keywords": ["explain", "accessibility", "cognitive-load", "prose", "usability", "audit"]
+}
