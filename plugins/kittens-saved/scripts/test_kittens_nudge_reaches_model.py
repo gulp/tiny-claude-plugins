@@ -81,18 +81,36 @@ def _msg(uuid: str, text: str) -> str:
 
 
 def _user(uuid: str, text: str = "go on") -> str:
-    """A user-side record — the thing that delimits one turn from the next.
+    """A human turn — one of several record kinds that delimit one turn from
+    the next.
 
-    Fixtures here must include these. The hook decides which assistant message
-    belongs to the ending turn by asking whether it comes after the last
-    user-side record, so an assistant-only transcript is not a smaller version
-    of a real one; it is a shape the hook cannot reason about.
+    Fixtures here must include a delimiter of some kind. The hook decides which
+    assistant message belongs to the ending turn by asking whether it comes
+    after the last record the agent did not write, so an assistant-only
+    transcript is not a smaller version of a real one; it is a shape the hook
+    cannot reason about.
     """
     return json.dumps({
         "type": "user",
         "uuid": uuid,
         "message": {"role": "user", "content": text},
     }) + "\n"
+
+
+def _hook_injection(uuid: str) -> str:
+    """What a Stop-hook `additionalContext` re-invocation actually writes.
+
+    Verified against a live transcript 2026-08-13: NO `user` record is written
+    when this hook injects context and the agent speaks again. The injection
+    lands as `attachment`/`system` records, so consecutive hook-driven turns
+    read as assistant, assistant, assistant with the last `user` record far
+    behind all of them. That is the shape that broke a `type == "user"` turn
+    boundary, and it is the plugin's own nudges that produce it.
+    """
+    return (
+        json.dumps({"type": "attachment", "uuid": uuid + "-a", "content": "<reminder/>"}) + "\n"
+        + json.dumps({"type": "system", "uuid": uuid + "-s", "content": "hook output"}) + "\n"
+    )
 
 
 def _tool_result(uuid: str, tool_use_id: str = "toolu_1") -> str:
@@ -261,6 +279,28 @@ class TestTurnBoundary(unittest.TestCase):
         # words from a turn the human has already seen answered.
         self._write(_user("u1"), _msg("a1", "previous turn"), _user("u2"))
         self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "")
+
+    def test_hook_driven_turn_is_delimited_without_any_user_record(self):
+        # THE SECOND BUG (live 2026-08-13, one commit after the first). When
+        # this hook injects additionalContext the agent speaks again with NO
+        # `user` record between the two turns. Under a `type == "user"`
+        # boundary the previous turn's text already satisfies "after the last
+        # user record", so an unflushed current turn reads as the previous one
+        # — the exact failure the positional rule was written to end, on the
+        # exact path the plugin's own nudges create.
+        self._write(
+            _user("u1"), _msg("a1", "previous turn"), _hook_injection("h1"),
+        )
+        self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "")
+
+    def test_hook_driven_turn_is_read_once_it_lands(self):
+        # The other half: the same shape, now flushed, must be READ. A boundary
+        # so strict it never reports is not a fix.
+        self._write(
+            _user("u1"), _msg("a1", "previous turn"), _hook_injection("h1"),
+            _msg("a2", "this turn"),
+        )
+        self.assertEqual(ks._current_response_text(self.t, max_wait=0.5), "this turn")
 
     def test_late_flush_is_still_picked_up(self):
         self._write(_user("u1"), _msg("a1", "previous turn"), _user("u2"))

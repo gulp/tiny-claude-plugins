@@ -524,15 +524,25 @@ def _response_after_last_user(transcript_path):
     """(ready, text) for the assistant text of the turn that is ENDING.
 
     `ready` is True when the last assistant text record sits AFTER the last
-    record from the user side — i.e. the agent has spoken since the last thing
+    record the agent did NOT write — i.e. it has spoken since the last thing
     that came in. That is what "this turn's response" means, and it is decided
     by POSITION in the transcript, never by wall-clock or by change-detection.
 
     Position is the whole point (see `_current_response_text`). Within a turn,
-    tool results interleave as user-side records, and the closing assistant
-    text always follows the last of them; across turns, a fresh human message
-    resets the boundary. So the same rule both finds the ending turn and
+    tool results interleave as `user` records and the closing assistant text
+    always follows the last of them; across turns, whatever re-invoked the
+    agent resets the boundary. So the same rule both finds the ending turn and
     refuses to read one turn behind.
+
+    THE BOUNDARY IS "NOT ASSISTANT", NOT "IS USER". This cost a second bug
+    (found live 2026-08-13, one commit after the first): when THIS hook injects
+    `additionalContext`, the agent is re-invoked with no `user` record written
+    at all — the injection lands as `attachment`/`system` records. Consecutive
+    turns therefore look like assistant, assistant, assistant with the last
+    `user` record far behind all of them, so a `type == "user"` boundary is
+    already satisfied by the PREVIOUS turn's text and the hook reads it the
+    moment the current turn has not flushed yet. The plugin's own nudges are
+    what produce that shape, so it hit the exact path this code exists to serve.
 
     Sidechain (subagent) records are skipped on both sides: a subagent's text
     is not this turn's response, and letting it move the boundary would nudge
@@ -540,7 +550,7 @@ def _response_after_last_user(transcript_path):
     """
     if not transcript_path or not os.path.exists(transcript_path):
         return (False, "")
-    last_user = -1
+    last_other = -1
     last_assistant = -1
     text = ""
     try:
@@ -556,10 +566,8 @@ def _response_after_last_user(transcript_path):
                 if obj.get("isSidechain"):
                     continue
                 kind = obj.get("type")
-                if kind == "user":
-                    last_user = i
-                    continue
                 if kind != "assistant":
+                    last_other = i
                     continue
                 content = (obj.get("message") or {}).get("content")
                 parts = []
@@ -573,7 +581,7 @@ def _response_after_last_user(transcript_path):
                     text = "\n".join(parts)
     except OSError:
         return (False, "")
-    if last_assistant < 0 or last_assistant < last_user:
+    if last_assistant < 0 or last_assistant < last_other:
         return (False, "")
     return (True, text)
 
