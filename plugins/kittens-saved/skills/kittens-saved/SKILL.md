@@ -114,6 +114,20 @@ If a phrase is a coin-flip — it fires on honest behaviour as much as on a tell
 | `warn rm "<matcher>"` | remove an override entry |
 | `warn add "<matcher>" --reason "…" --escape "…"` | add — **PREVIEW ONLY** unless `--yes` |
 
+**`--regex` applies to `warn add` too**, exactly as it does to `blame add`.
+Without it the matcher is stored as a **literal**, so a pattern written with
+metacharacters is escaped into something that can never match: `warn add "worth
+not(ic)?ing as a pattern"` silently becomes `/worth not\(ic\)\?ing as a
+pattern/`. The add reports `✓ warned (soft)` and writes the file either way —
+the entry is simply inert. Observed 2026-08-14, from an agent reading the
+`--regex` note under `blame` and assuming it did not reach `warn`.
+
+**So always `warn test` the matcher after writing it**, against text that
+*should* fire and text that should not. The preview does print the escaped form
+— `would add (warn): /worth not\(ic\)\?ing as a pattern/` — and reading it is
+the cheaper catch, but a post-write `test` is the one that cannot be skimmed
+past.
+
 ## The gate — adds NEVER write blind
 
 `blame add` and `warn add` **preview and write nothing** without `--yes`, and
