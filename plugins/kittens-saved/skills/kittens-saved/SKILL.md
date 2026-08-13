@@ -2,16 +2,18 @@
 name: kittens
 description: >
   The single front door to the kittens-saved plugin — bare /kittens with a verb
-  argument. Read/inspect verbs: status (is enforcement live + tally), stats,
-  count, doctor (--fix), config, zen. Control verb: toggle on|off (silence THIS
-  session's reminder). List-management verbs (HUMAN-GATED adds): blame
-  (denylist of high-confidence punt phrases) and warn (soft warnlist of
-  style/sycophancy tells with reason+escape). Use when the user runs /kittens,
-  asks "kitten status/stats/count/tally", "kittens doctor/config", "kittens
-  on/off", "silence the kitten nudges", or wants to add/list/test denylist or
-  warnlist phrases ("blame this phrase", "warn on this tell"). For saving a
-  kitten or the escape hatch use counting-saved-kittens.
-argument-hint: "[status|stats|count|doctor|config|zen|toggle on|off|blame …|warn …] [--json]"
+  argument. Read/inspect verbs: mine (what is waiting on YOU, the human),
+  status (is enforcement live + tally), stats, count, doctor (--fix), config,
+  zen. Control verb: toggle on|off (silence THIS session's reminder).
+  List-management verbs (HUMAN-GATED adds): blame (denylist of high-confidence
+  punt phrases) and warn (soft warnlist of style/sycophancy tells with
+  reason+escape). Use when the user runs /kittens, asks "what's waiting on me",
+  "list mine", "what do I owe", "what's on my plate", "kitten
+  status/stats/count/tally", "kittens doctor/config", "kittens on/off",
+  "silence the kitten nudges", or wants to add/list/test denylist or warnlist
+  phrases ("blame this phrase", "warn on this tell"). For saving a kitten or
+  the escape hatch use counting-saved-kittens.
+argument-hint: "[mine|status|stats|count|doctor|config|zen|toggle on|off|blame …|warn …] [--json]"
 allowed-tools: Bash(python3:*), AskUserQuestion
 disable-model-invocation: true
 ---
@@ -28,7 +30,15 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py" $ARGUMENTS
 Default to `status` when no verb is given, and infer from prose — "how are the
 kittens" → `status`, "why is the reminder off" → `doctor`, "kitten totals" →
 `stats`, "kittens off" → `toggle off`, "blame this phrase" → the blame gate
-below.
+below, "list mine" / "what's waiting on me" / "what do I owe" → `mine`.
+
+**`mine` is named from the human's side of the fence.** The human saying "mine"
+means the bucket the ledger stores as `yours` — the residual the agent declared
+was theirs. The word is owner-relative and the two speakers mean opposite
+buckets by it, so never answer "list mine" from your own perspective; that
+mistake is what the verb exists to prevent. Your own unsaved residual is never
+something the human asked to see — if it is non-empty you should be doing it,
+not listing it.
 
 ## Read / repair verbs
 

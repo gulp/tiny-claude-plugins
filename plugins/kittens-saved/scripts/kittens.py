@@ -28,6 +28,7 @@ as well as `uv run`.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
 import glob as _glob
 import hashlib
@@ -163,6 +164,377 @@ def _resolve_session(explicit: str | None, stdin_payload: dict | None) -> str:
         if cand and _ID_OK.match(str(cand)):
             return str(cand)
     return "default"
+
+
+HUMAN_PREFIX = "[human] "
+
+
+def _config_dir() -> str:
+    """Claude Code's own config home. CLAUDE_CONFIG_DIR is its documented
+    override; honouring it matters here in a way it does not for `_global_dir`,
+    because the tasks directory is read by Claude Code rather than by us — write
+    to a phantom ~/.claude on a box that moved its config and the tasks are
+    created successfully and seen by nobody."""
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+
+
+def _settings_task_list_id() -> str | None:
+    """`env.CLAUDE_CODE_TASK_LIST_ID` from the nearest settings layer.
+
+    Walks cwd upward to $HOME (local before committed at each level, matching
+    Claude Code's own precedence), then falls back to ~/.claude/settings.json.
+    """
+    seen = []
+    cur = os.path.abspath(os.getcwd())
+    home = os.path.abspath(os.path.expanduser("~"))
+    while True:
+        seen.append(os.path.join(cur, ".claude"))
+        if cur == home or os.path.dirname(cur) == cur:
+            break
+        cur = os.path.dirname(cur)
+    seen.append(os.path.join(_config_dir()))
+    for base in seen:
+        for name in ("settings.local.json", "settings.json"):
+            try:
+                with open(os.path.join(base, name), encoding="utf-8") as fh:
+                    val = (json.load(fh).get("env") or {}).get("CLAUDE_CODE_TASK_LIST_ID")
+            except (OSError, json.JSONDecodeError, ValueError, AttributeError):
+                continue
+            if val and _ID_OK.match(str(val)):
+                return str(val)
+    return None
+
+
+def _tasks_dir(session: str, explicit: str | None = None) -> str | None:
+    """Claude Code's task list directory — NOT simply <config>/tasks/<session-id>.
+
+    The session UUID is only the DEFAULT. `CLAUDE_CODE_TASK_LIST_ID` (normally
+    set in a project's settings `env`) replaces it, and when it is set the
+    session UUID directory is never created at all. Resolving to the UUID
+    regardless is the failure this ordering exists to prevent: the session id is
+    perfectly *known*, so no "unknown session" guard catches it — the write
+    simply succeeds into a fresh directory that nothing reads. Caught by the
+    cctasks session, 2026-08-13, which had already mapped this.
+
+    A named list is per-PROJECT, not per-session: several sessions share it and
+    filed items outlive the session that filed them. That is what makes dedup
+    load-bearing rather than merely tidy.
+
+    Deliberately NOT in the chain: "newest-written list dir". cctasks uses it as
+    a last resort and is right to, being read-only — a reader that guesses wrong
+    shows you the wrong list, while a WRITER that guesses wrong injects the
+    human's obligations into an unrelated project's list. For writes, no answer
+    beats a wrong one.
+    """
+    for cand in (explicit, os.environ.get("CLAUDE_CODE_TASK_LIST_ID"), _settings_task_list_id()):
+        if cand and _ID_OK.match(str(cand)):
+            return os.path.join(_config_dir(), "tasks", str(cand))
+    if session == "default" or not _ID_OK.match(session):
+        return None
+    return os.path.join(_config_dir(), "tasks", session)
+
+
+@contextlib.contextmanager
+def _task_list_lock(d: str, tries: int = 30, wait: float = 0.05, stale: float = 10.0):
+    """Take the SAME lock Claude Code and cctasks take on a task list.
+
+    The harness locks via proper-lockfile, which is mkdir-based: locking
+    `<listdir>/.lock` creates the DIRECTORY `<listdir>/.lock.lock` and heartbeats
+    its mtime. So the thing to create is `.lock.lock`, not `.lock` — a detail
+    that is genuinely confusing to discover later (cctasks session, 2026-08-13).
+    `os.mkdir` is atomic, which is the whole reason that shape was chosen.
+
+    Retry 30x50ms, then break a lock older than `stale` rather than hang on a
+    writer that crashed — matching proper-lockfile's own staleness window. A
+    lock we cannot take is not fatal: filing a human item is worth more than
+    strict mutual exclusion against a process that may not exist, so we proceed
+    unlocked rather than drop the item, and say nothing because the caller has
+    no useful response to it.
+    """
+    path = os.path.join(d, ".lock.lock")
+    held = False
+    for _ in range(tries):
+        try:
+            os.mkdir(path)
+            held = True
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(path).st_mtime > stale:
+                    os.rmdir(path)
+                    continue
+            except OSError:
+                pass
+            time.sleep(wait)
+        except OSError:
+            break
+    try:
+        yield held
+    finally:
+        if held:
+            try:
+                os.rmdir(path)
+            except OSError:
+                pass
+
+
+def _write_task_atomically(path: str, payload: dict) -> bool:
+    """tmp-plus-rename inside the same directory, so no reader ever sees a
+    half-written task. Returns False without touching anything if the target
+    already exists — `os.replace` would clobber, and this function must keep the
+    never-overwrite property the old exclusive-create gave for free.
+    Callers hold the list lock, which is what makes the exists-check race-free."""
+    if os.path.exists(path):
+        return False
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".kittens-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def _read_tasks(d: str) -> list[dict]:
+    out = []
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, name), encoding="utf-8") as fh:
+                out.append(json.load(fh))
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue  # a task file we cannot parse is Claude Code's, not ours to repair
+    return out
+
+
+# The ownership-marker contract, published by cctasks (#67, 2026-08-13) via
+# `cctasks -j --owner-spec`. Implemented here rather than shelled out to, so the
+# plugin keeps working on a box without cctasks — but the spec is THEIRS, and
+# `test_kittens_tasks.py` asserts this regex still equals the one they publish
+# whenever cctasks is on PATH, so the two cannot drift silently.
+#
+# Anchored to the ends on purpose: a subject that merely CONTAINS the word human
+# stays agent-owned. A substring match would silently steal ownership of ordinary
+# tasks, which is why their test set keeps a decoy and so does ours.
+_HUMAN_MARK = re.compile(r"(?i)(^\s*\[human\]\s*|\s*\[human\]\s*$)")
+
+
+def _bare_subject(subject: str) -> str:
+    """The dedup key: subject with the ownership marker stripped, whitespace
+    collapsed, trimmed. Stripping runs TWICE so a subject carrying the marker at
+    both ends reduces fully, matching cctasks' own rule."""
+    s = _HUMAN_MARK.sub(" ", str(subject))
+    s = _HUMAN_MARK.sub(" ", s)
+    return " ".join(s.split())
+
+
+def _is_human_owned(subject: str) -> bool:
+    return bool(_HUMAN_MARK.search(str(subject)))
+
+
+def _item_key(item: str) -> str:
+    """Stable id for a declared item: a hash of its whitespace-collapsed text.
+    Survives any later edit to the task's subject or description, which plain
+    text matching does not."""
+    return "sha256:" + hashlib.sha256(" ".join(str(item).split()).encode("utf-8")).hexdigest()[:16]
+
+
+def _task_subject(item: str, width: int = 96) -> str:
+    """`[human] ` + a one-line subject. The full text still goes in the
+    description, so truncation loses nothing — it only keeps the list readable."""
+    flat = " ".join(item.split())
+    if len(flat) > width:
+        flat = flat[: width - 1].rstrip() + "…"
+    return HUMAN_PREFIX + flat
+
+
+def write_human_tasks(session: str, items: list[str]) -> tuple[list[str], str | None]:
+    """Mirror human-owned residual into Claude Code's task list. CREATE-ONLY.
+
+    Deduped by subject because every escape restates the WHOLE residual — the
+    ledger has no identity across declarations, so without dedup a session that
+    declares three times files nine tasks.
+
+    Nothing here ever closes or edits an existing task. An item vanishing from a
+    later declaration is not evidence the human did it; the agent may simply have
+    stopped listing it. The asymmetry is deliberate and runs the cheap way: a
+    spurious task costs one dismissal, silently closing a live obligation costs
+    the obligation.
+
+    KNOWN LIMIT — this reaches the model's views but not the human's TUI.
+    `TaskList` and the injected task reminder re-read this directory per call,
+    so a file written here is visible to the agent at once (measured 2026-08-13,
+    independently confirmed by the cctasks session). The Ctrl+T overlay refreshes
+    on a harness-driven task mutation rather than on open, so a task only this
+    function created sits invisible there until some later tool call touches a
+    task. Because `escape` runs at the END of a turn, that later call usually
+    never comes. Hence the skill instructs `TaskCreate` as the primary path and
+    treats this as reconciliation: filing an item the human cannot see is most of
+    a no-op, since being seen is the whole purpose.
+
+    Returns (created_subjects, dir) — dir is None when there was nowhere to write.
+    """
+    d = _tasks_dir(session)
+    if d is None:
+        return [], None
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return [], None
+
+    # Everything below — reading the list, allocating ids, writing — happens
+    # under the harness's own lock. Scanning outside it lets `cctasks done` or
+    # Claude Code land a write between our read and our allocation, which is
+    # precisely how two tasks end up sharing an id.
+    with _task_list_lock(d):
+        return _file_tasks_locked(d, items)
+
+
+def _file_tasks_locked(d: str, items: list[str]) -> tuple[list[str], str | None]:
+    existing = _read_tasks(d)
+    # Dedup on cctasks' `bareSubject`, not on the literal subject: the marker
+    # exists in the wild as BOTH a prefix and a suffix (#58 predates this code),
+    # so exact-string matching files the same obligation twice. Restricted to
+    # HUMAN-OWNED tasks — an unrelated agent task that happens to share wording
+    # must not suppress filing a human obligation, which a bare-subject match
+    # across all tasks would do.
+    seen = {_bare_subject(t.get("subject", ""))
+            for t in existing if _is_human_owned(t.get("subject", ""))}
+    # Stable identity, because TEXT IS NOT ONE. bareSubject fixed the two-marker-
+    # shapes problem but not the join problem: the key breaks when EITHER side is
+    # edited, and editing is legitimate on both. Observed twice on 2026-08-13 —
+    # once re-wording the declared item, once tidying a task's truncated subject
+    # via TaskUpdate; each filed a duplicate. `metadata` survives to disk as a
+    # first-class key (verified against a tool-created task), so anything we file
+    # carries a hash of its item text and is matched on that first. Subject edits
+    # then cost nothing.
+    keyed = {(t.get("metadata") or {}).get("kittensKey")
+             for t in existing if isinstance(t.get("metadata"), dict)}
+    keyed.discard(None)
+    # Next id is max(highest existing id, .highwatermark) + 1 — BOTH floors.
+    # `.highwatermark` is not decoration: clear-all deletes every *.json and
+    # writes the highest id into it precisely so numbering does not restart.
+    # Allocating from the files alone is correct only until the first clear;
+    # after one, the directory is empty, allocation restarts at 1, and the new
+    # tasks collide with ids the harness still considers spent. Read it, never
+    # write it — the clear path owns it. (cctasks session, 2026-08-13,
+    # correcting its own earlier advice that this file was only a prune cursor.)
+    next_id = 1
+    for t in existing:
+        try:
+            next_id = max(next_id, int(str(t.get("id", "0"))) + 1)
+        except ValueError:
+            continue  # non-numeric id: Claude Code's business, just don't collide
+    try:
+        with open(os.path.join(d, ".highwatermark"), encoding="utf-8") as fh:
+            next_id = max(next_id, int(fh.read().strip()) + 1)
+    except (OSError, ValueError):
+        pass  # absent or unparseable: the file floor stands on its own
+
+    created = []
+    for item in items:
+        subject = _task_subject(item)
+        ident = _item_key(item)
+        key = _bare_subject(subject)
+        # Identity first, text second. The text fallback still earns its place:
+        # an item the AGENT filed through TaskCreate carries no kittensKey, and
+        # catching it by text at that moment is right, because nothing has had a
+        # chance to drift yet.
+        if ident in keyed or key in seen:
+            continue
+        keyed.add(ident)
+        seen.add(key)
+        payload = {
+            "id": str(next_id),
+            "subject": subject,
+            "description": item,
+            "activeForm": f"Waiting on you — {' '.join(item.split())[:60]}",
+            "status": "pending",
+            "blocks": [],
+            "blockedBy": [],
+            "metadata": {"kittensKey": ident, "owner": "human"},
+        }
+        path = os.path.join(d, f"{next_id}.json")
+        if not _write_task_atomically(path, payload):
+            continue
+        created.append(subject)
+        next_id += 1
+    return created, d
+
+
+_CACHE_VER = re.compile(r"/kittens-saved/([^/]+)/scripts/")
+
+
+def _running_version() -> str | None:
+    """The plugin version THIS process was loaded from, read off our own path.
+
+    A plugin-cached copy lives at
+    `…/plugins/cache/<mp>/kittens-saved/<version>/scripts/kittens.py`, so the
+    version is in the path and needs no manifest read. Returns None when running
+    from a repo checkout, which is the normal case for tests and for a developer
+    invoking the script directly — that is not a cached install and has no
+    version to report.
+    """
+    m = _CACHE_VER.search(os.path.abspath(__file__))
+    return m.group(1) if m else None
+
+
+def _alive_path(session: str) -> str:
+    d = os.path.join(_global_dir(), "alive")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, f"{session}.json")
+
+
+def stamp_hook_alive(session: str) -> None:
+    """Breadcrumb: the Stop hook ran in this session, from this version.
+
+    Written on every stop, overwriting rather than appending, so it cannot grow.
+    The point is NOT to prove the code works — the tests do that — but to prove
+    the harness is still ROUTING stop events into the copy we think it is. Those
+    are different questions, and only this one catches a stale binding.
+
+    A plugin-shipped hook binds at session start and keeps pointing at the cache
+    directory it bound to. Every version dir persists (17 of them here), so a
+    reinstall or an update leaves a live session executing an old copy forever,
+    silently. Idea taken from the cctasks/ultratask session, which found its own
+    guard unloaded this way within an hour of shipping the check.
+    """
+    try:
+        with open(_alive_path(session), "w", encoding="utf-8") as fh:
+            json.dump({"ts": _now(), "version": _running_version(),
+                       "from": os.path.abspath(__file__)}, fh)
+    except OSError:
+        pass  # a breadcrumb that cannot be written must never break the hook
+
+
+def read_hook_alive(session: str) -> dict | None:
+    try:
+        with open(_alive_path(session), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def installed_versions(marketplace: str = "tiny-claude-plugins") -> list[str]:
+    base = os.path.join(_config_dir(), "plugins", "cache", marketplace, "kittens-saved")
+    try:
+        return sorted(n for n in os.listdir(base)
+                      if os.path.isdir(os.path.join(base, n)))
+    except OSError:
+        return []
 
 
 def _anchor_path(session: str) -> str:
@@ -719,16 +1091,55 @@ def cmd_escape(args) -> int:
     mine = max(0, int(args.mine))
     yours = max(0, int(args.yours))
     granted = mine == 0
+    yours_items = [t.strip() for t in getattr(args, "yours_item", []) or [] if t.strip()]
+    mine_items = [t.strip() for t in getattr(args, "mine_item", []) or [] if t.strip()]
+    # The counts stay authoritative — they are what grants or denies, and older
+    # ledger records have no items at all. Itemization is additive: when the
+    # caller passed fewer items than it declared, `mine` says so rather than
+    # implying the short list is the whole residual.
     _append(
         session,
         {"kind": "escape", "mine": mine, "yours": yours,
-         "granted": granted, "reason": args.reason},
+         "granted": granted, "reason": args.reason,
+         "yours_items": yours_items, "mine_items": mine_items},
     )
+    # The backstop half of "both": the skill asks the agent to file these with
+    # TaskCreate, and this reconciles whatever it did not. Dedup by subject means
+    # a compliant agent costs nothing here — the task already exists, so nothing
+    # is written twice.
+    created, tdir = ([], None)
+    if yours_items and not getattr(args, "no_tasks", False):
+        created, tdir = write_human_tasks(session, yours_items)
+
     if granted:
         msg = "🐈 escape GRANTED — no kittens of yours left unsaved."
         if yours:
             msg += f" {yours} item(s) are deliberately the human's."
         print(msg)
+        if created:
+            print(f"   ⤷ filed {len(created)} to the task list as {HUMAN_PREFIX.strip()}:")
+            for s in created:
+                print(f"     · {s[len(HUMAN_PREFIX):]}")
+            # Having to CREATE proves TaskCreate was never called for these — a
+            # compliant agent's items already exist and dedup to nothing. Say it,
+            # because the failure is otherwise invisible: the write succeeded,
+            # the agent sees the item in TaskList, and only the human's overlay
+            # is stale. Silence here would read as "delivered".
+            print(f"   ⚠ you did not call TaskCreate for {'these' if len(created) > 1 else 'this'} —")
+            print("     the human's Ctrl+T overlay refreshes on a tool-driven task")
+            print("     mutation, not on open, so it will not show them until some")
+            print("     later call touches a task.")
+            # Do NOT say "file them with TaskCreate" here: they are on disk
+            # already, so an obedient agent would create a second copy of each.
+            # The remedy is ordering, and after the fact it is a touch, not a
+            # create.
+            print("     They are on disk now — calling TaskCreate for them would")
+            print("     DUPLICATE them. Either touch any task (TaskUpdate) to force")
+            print("     the refresh, or call TaskCreate BEFORE escape next time.")
+        elif yours_items and tdir is None:
+            # Named the silent path rather than swallowing it: an unidentified
+            # session is exactly when a human item most needs to not vanish.
+            print("   ⤷ (session id unknown — nothing filed to the task list)")
         return 0
     print(
         f"🙀 escape DENIED — you declared {mine} item(s) that are YOURS to save.\n"
@@ -755,6 +1166,61 @@ def cmd_count(args) -> int:
             print(f"   ⚠ still yours to save: {t['mine']}")
         if _is_off(session):
             print("   (enforcement toggled OFF for this session)")
+    return 0
+
+
+def cmd_mine(args) -> int:
+    """What is waiting on the HUMAN — the bucket the ledger stores as `yours`.
+
+    Snapshot, not a live obligations list: `_tally` already reads the residual
+    off the LAST escape rather than summing them, because each escape restates
+    the whole residual from scratch. So this answers "what did the agent last
+    say it was leaving you", which is a question the ledger can actually answer.
+    It deliberately does NOT try to be a to-do list: nothing here has identity
+    across declarations and nothing ever closes an item, so a running list would
+    only ever grow and would drift from whatever real tracker the project uses.
+    """
+    session = _resolve_session(args.session, None)
+    t = _tally(_read(session))
+    last = t["last_escape"]
+    items = list((last or {}).get("yours_items") or [])
+    count = t["yours"]
+
+    if args.json:
+        print(json.dumps({
+            "session": session,
+            "waiting_on_you": count,
+            "items": items,
+            "itemized": len(items) >= count if count else True,
+            "reason": (last or {}).get("reason", ""),
+            "declared_at": (last or {}).get("ts", ""),
+            "still_the_agents": t["mine"],
+        }, indent=2))
+        return 0
+
+    if last is None:
+        print("🐈 nothing declared yet this session — the agent has not taken an escape hatch.")
+        return 0
+    if not count:
+        print("🐈 nothing is waiting on you.")
+        return 0
+
+    print(f"🙏 waiting on you ({count}):")
+    for i, text in enumerate(items, 1):
+        print(f"   {i}. {text}")
+    # An older record, or a caller that passed only counts, leaves the list short.
+    # Say that outright — a silently truncated list reads as the complete residual.
+    if len(items) < count:
+        missing = count - len(items)
+        if items:
+            print(f"   … and {missing} more the agent counted but did not name.")
+        else:
+            print("   (not itemized — the agent declared a count only)")
+        reason = (last or {}).get("reason", "")
+        if reason:
+            print(f"\n   what it said instead:\n   {reason}")
+    if t["mine"]:
+        print(f"\n   ⚠ {t['mine']} item(s) are still the AGENT's — its last escape was denied.")
     return 0
 
 
@@ -825,6 +1291,13 @@ def cmd_hook_stop(args) -> int:
     No denied escape and no denylist hit => `suppressOutput`, say nothing."""
     payload = _read_stdin_json()
     session = _resolve_session(args.session, payload)
+    # Stamped BEFORE the enable/mute gates, and before any early return: the
+    # question this answers is "is the harness still routing stops into this
+    # copy", which is true even when the plugin is muted and deliberately
+    # silent. Gating the breadcrumb on enablement would make a muted session
+    # indistinguishable from an unbound one — the exact confusion it exists
+    # to remove.
+    stamp_hook_alive(session)
     if not _cfg_enabled() or _is_off(session):
         print(json.dumps({"continue": True, "suppressOutput": True}))
         return 0
@@ -1023,6 +1496,47 @@ def cmd_doctor(args) -> int:
     findings = []  # (severity, message, fixable)
     if not writable:
         findings.append(("error", f"state dir not writable: {d}", False))
+
+    # Is the harness still routing stops into the copy we think it is? A
+    # plugin-shipped hook binds at session start and keeps pointing at that
+    # cache dir; every version dir persists, so an update or reinstall leaves a
+    # live session executing an old copy with nothing announcing it. Neither the
+    # tests nor a version bump can see this — only the running session can.
+    alive = read_hook_alive(session)
+    if alive is None:
+        # Absence is only evidence once the session has DONE something. A fresh
+        # session has legitimately not ended a turn yet, and reporting that as a
+        # finding made `doctor` exit 1 on a clean install — crying wolf on the
+        # normal case, which is how a checker gets ignored. A session with
+        # ledger activity and no breadcrumb is the genuinely suspicious shape.
+        if _read(session):
+            findings.append((
+                "warn",
+                "this session has ledger activity but the Stop hook has never stamped "
+                "it — the hook is probably not loaded. Plugin hooks bind at session "
+                "start, so a reinstall or an update unbinds them from live sessions "
+                "with nothing announcing it. Restart, or /reload-plugins, then re-check.",
+                False))
+    else:
+        seen = alive.get("version")
+        newest = (installed_versions() or [None])[-1]
+        if seen and newest and seen != newest:
+            findings.append((
+                "warn",
+                f"Stop hook in this session is running v{seen}, but v{newest} is "
+                f"installed — this session bound to the older copy and will keep "
+                f"using it until it restarts (or /reload-plugins).",
+                False))
+        elif seen is None:
+            # NOT a development-only case, which is what this said first and was
+            # wrong about: observed on two real sessions 2026-08-13, whose
+            # ${CLAUDE_PLUGIN_ROOT} resolved to the working tree rather than to
+            # a cache snapshot. It is reported as info rather than a finding
+            # because it is a legitimate and arguably better state — a hook
+            # running from the tree picks up edits with no version bump and no
+            # re-sync, so the whole staleness class simply does not apply to it.
+            print(f"   note: Stop hook runs from a working tree, not a version cache "
+                  f"({alive.get('from')}) — edits are live, no bump needed.")
 
     ignored = _git_ignored(d)
     fixed_ignore = False
@@ -1879,8 +2393,26 @@ def main() -> int:
     s = sub.add_parser("escape", help="declare residual and take the escape hatch")
     s.add_argument("--mine", type=int, default=0, help="residual items that are YOURS (agent's) to save")
     s.add_argument("--yours", type=int, default=0, help="residual items deliberately the human's")
+    s.add_argument("--yours-item", action="append", default=[], metavar="TEXT",
+                   help="one human-owned residual item, repeatable; what `mine` lists back "
+                        "to the human. Without these only a count is stored and `mine` has "
+                        "nothing to show.")
+    s.add_argument("--mine-item", action="append", default=[], metavar="TEXT",
+                   help="one agent-owned residual item, repeatable (shown on a DENIED escape)")
+    s.add_argument("--no-tasks", action="store_true",
+                   help="do not mirror --yours-item into Claude Code's task list")
     s.add_argument("--reason", default="")
     s.set_defaults(fn=cmd_escape)
+
+    # `mine` is named from the HUMAN's side of the fence: the human typing
+    # "/kittens mine" means the bucket this script stores as `yours`. The word is
+    # owner-relative and the two speakers mean opposite buckets by it — an agent
+    # answered "list mine" from its own perspective once and had to be corrected,
+    # which is why the flip is done here, in one place, rather than left to the
+    # reader of each call site.
+    s = sub.add_parser("mine", help="list what is waiting on YOU (the human)")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
+    s.set_defaults(fn=cmd_mine)
 
     s = sub.add_parser("count", help="show the tally")
     s.add_argument("--scope", choices=["session", "all"],

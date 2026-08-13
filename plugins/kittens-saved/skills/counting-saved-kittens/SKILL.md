@@ -46,8 +46,51 @@ residual item into two buckets, honestly:
 Then declare:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py" escape --mine <K> --yours <M> --reason "<summary>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/kittens.py" escape \
+  --mine <K> --yours <M> --reason "<summary>" \
+  --yours-item "<one thing that is theirs>" --yours-item "<the next one>"
 ```
+
+**File each human item as a task too, prefixed `[human] `.** Before (or right
+after) the escape, call `TaskCreate` once per human-owned item with the subject
+`[human] <the item>`. The point is that the human sees what they are holding up
+in the *same* list as everything else in flight, with ownership legible on the
+item — a separate place for their share is a place they have to remember to go
+and check.
+
+`escape` is the backstop, not the primary: it mirrors any `--yours-item` you
+passed into the task list itself, deduped by subject, so a compliant agent
+costs nothing (the task already exists) and a forgetful one still leaves the
+human a usable list.
+
+**Do not lean on the backstop — it cannot reach the Ctrl+T overlay.** Measured
+2026-08-13: `TaskList` and the injected task reminder re-read the tasks
+directory per call, so a file written by the script is visible to *you*
+immediately. The TUI overlay does not; it refreshes on a harness-driven task
+mutation, not on open. Since `escape` runs at the end of a turn, when no
+further tool call is coming, a script-only filing leaves the human's own view
+stale until something else touches a task — possibly the next session. The
+`TaskCreate` call is what puts the item in front of them, which is the entire
+point of filing it. Never file a `--mine-item` as a task — your own residual
+is not the human's to see on their list; if it is non-empty you should be doing
+it.
+
+**Restate a carried-over item VERBATIM.** Dedup is exact-subject, because the
+ledger has no identity across declarations and there is nothing else to match
+on. So re-wording an item you already declared — adding a status note, tightening
+the phrasing, appending "(in progress)" — files a SECOND task for the same
+obligation. Copy the previous wording character-for-character for anything still
+outstanding, and put the freshness elsewhere (the `--reason`, or a `TaskUpdate`
+on the existing task). Observed 2026-08-13: an agent restated one item with a
+parenthetical and immediately duplicated it.
+
+**Name every `--yours` item.** `--yours-item` is repeatable and is what
+`/kittens mine` reads back to the human when they ask what is waiting on them.
+A bare count is not an answer to that question — it survives no compaction and
+no session boundary, so "waiting on you: 2" decays into two things nobody can
+name. Pass one `--yours-item` per unit counted in `--yours`; `mine` says
+outright when the list is shorter than the count, so under-naming shows up
+rather than passing silently.
 
 - **Exit 0 (GRANTED)** — `mine == 0`. You left nothing of yours unsaved; the
   only residual is genuinely the human's. You may stop cleanly.
