@@ -27,6 +27,15 @@ collides mechanically with any of the list's installables).
 
 ## Ruling 2 — the engine is named **ultraloop**
 
+> **Re-confirmed 2026-08-14 (operator).** "Moved to ultraloop" (2026-08-10)
+> named the **engine**, per this ruling — it was **not** a plugin rename. The
+> plugin stays `ultraralph`; there is no `plugins/ultraloop/` and none is
+> wanted. Recorded here because two tracked tasks had already been rewritten to
+> read "ultraloop (renamed from ultraralph)", each carrying a "flagged for
+> operator confirmation" clause that then blocked work on a premise this note
+> already answered. The two names are load-bearing and distinct: read the
+> ownership table below before re-deriving either.
+
 `ralph-this` (the engine: `bin/ralph`, vendor-neutral `lib/loop.sh`,
 three-function adapter contract, `.ralph/` bed, rootless-podman confinement
 with admission control and egress pod, falsification gate harness) is renamed
@@ -158,8 +167,11 @@ cannot run today: bed location is assumed, not a flag.
 
 ## Open (deliberately)
 
-- The escalation-record schema/path itself (carried from the ultragoal note's
-  seam section; folds into the ultraralph v0.3 bundle work).
+- ~~The escalation-record schema/path itself~~ — **CLOSED 2026-08-10.** Specced
+  in `escalation-record-seam.md` (path, v1 schema, writer + reader contracts,
+  doctor lines) and implemented: `write-escalation.py` emits those fields,
+  `goal-stop-guard.sh` calls it and keeps the `attempts.jsonl` ledger, and
+  `test-guard-verdicts.sh` covers the deadline and `dirty_tree` paths.
 - The rename cascade's execution in the engine repo (its own change, its own
   tests; nothing here blocks on it — the plugin can shim `ralph`→`ultraloop`
   detection in doctor until it lands).
