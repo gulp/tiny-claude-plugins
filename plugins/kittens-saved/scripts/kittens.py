@@ -361,6 +361,32 @@ def _task_subject(item: str, width: int = 96) -> str:
     return HUMAN_PREFIX + flat
 
 
+def _dedup_key(text: str) -> str:
+    """The text-fallback key, applied identically to BOTH sides of the compare.
+
+    `_bare_subject` alone is not enough, because the two sides do not arrive in
+    the same shape: what we file has been through `_task_subject` and is capped
+    at 96 chars, while a task the agent filed via `TaskCreate` carries its full
+    untruncated wording. Keying the declared item off the truncated subject and
+    the stored task off the untruncated one means any item longer than the cap
+    misses, and the item is filed a second time (observed 2026-08-13: a 106-char
+    item duplicated as task #8, and it fires precisely when the agent FOLLOWED
+    the documented TaskCreate-then-escape process, since those tasks have no
+    kittensKey to match on first).
+
+    So put both through the same normalisation — strip marker, collapse, cap,
+    strip again. Idempotent: a second pass finds a string already under the cap
+    and changes nothing, so a key never depends on how many times it was taken.
+
+    Truncating the stored side does mean two DIFFERENT obligations sharing a
+    95-char prefix collapse to one key. That is not a new exposure — it is
+    already true of anything this function filed, since the cap is what lands in
+    the subject — and it stays the cheap direction to err: the stable
+    `kittensKey` is what carries real identity, and this fallback exists only
+    for the brief window before a task has one."""
+    return _bare_subject(_task_subject(_bare_subject(text)))
+
+
 def write_human_tasks(session: str, items: list[str]) -> tuple[list[str], str | None]:
     """Mirror human-owned residual into Claude Code's task list. CREATE-ONLY.
 
@@ -411,8 +437,16 @@ def _file_tasks_locked(d: str, items: list[str]) -> tuple[list[str], str | None]
     # HUMAN-OWNED tasks — an unrelated agent task that happens to share wording
     # must not suppress filing a human obligation, which a bare-subject match
     # across all tasks would do.
-    seen = {_bare_subject(t.get("subject", ""))
-            for t in existing if _is_human_owned(t.get("subject", ""))}
+    # Scoped further to tasks that have NO kittensKey. For anything we filed,
+    # the key IS the identity and the text match adds nothing but false hits:
+    # two different obligations agreeing for the first 95 characters reduce to
+    # one truncated subject, and the second gets silently dropped — the
+    # expensive direction, since a dropped item is an obligation nobody can see.
+    # (Pre-dates the truncation fix; HEAD drops it too. Verified 2026-08-13.)
+    seen = {_dedup_key(t.get("subject", ""))
+            for t in existing
+            if _is_human_owned(t.get("subject", ""))
+            and not (t.get("metadata") or {}).get("kittensKey")}
     # Stable identity, because TEXT IS NOT ONE. bareSubject fixed the two-marker-
     # shapes problem but not the join problem: the key breaks when EITHER side is
     # edited, and editing is legitimate on both. Observed twice on 2026-08-13 —
@@ -448,7 +482,7 @@ def _file_tasks_locked(d: str, items: list[str]) -> tuple[list[str], str | None]
     for item in items:
         subject = _task_subject(item)
         ident = _item_key(item)
-        key = _bare_subject(subject)
+        key = _dedup_key(item)
         # Identity first, text second. The text fallback still earns its place:
         # an item the AGENT filed through TaskCreate carries no kittensKey, and
         # catching it by text at that moment is right, because nothing has had a
@@ -1157,6 +1191,24 @@ def cmd_count(args) -> int:
     events = _read_all_sessions() if scope == "all" else _read(session)
     t = _tally(events)
     where = "all sessions" if scope == "all" else f"session {session}"
+    # The skill documents --json on the read verbs; count was the one that
+    # advertised it and did not have it, so asking produced a usage error
+    # blaming the flag rather than the gap.
+    if getattr(args, "json", False):
+        payload = {
+            "scope": scope,
+            "session": None if scope == "all" else session,
+            "saved": t["saved"],
+            "escapes": t["escapes"],
+            "granted": t["granted"],
+            "denied": t["denied"],
+        }
+        if scope != "all":
+            payload["yours"] = t["yours"]
+            payload["mine"] = t["mine"]
+            payload["enforcement_off"] = _is_off(session)
+        print(json.dumps(payload, indent=2))
+        return 0
     print(f"🐈 kittens-saved — {where}")
     print(f"   saved:            {t['saved']}")
     print(f"   escape hatches:   {t['escapes']} ({t['granted']} granted, {t['denied']} denied)")
@@ -2380,8 +2432,70 @@ def cmd_statusline(args) -> int:
         return 3
 
 
+_EXAMPLES = """\
+examples:
+  kittens save --reason "committed the groq model swap"
+  kittens escape --mine 0 --yours 1 --yours-item "pick a rollout window"
+  kittens mine --json
+  kittens blame test "say the word and I'll do it"
+  kittens blame add "say the word" --yes
+  kittens blame add --regex '\\bleaving (it|that) (open|unfinished)\\b' --yes
+  kittens warn add "happy to help" --reason "sycophancy" --escape "quoting a user"
+
+exit codes:
+  0  ok
+  1  findings remain (doctor; statusline status on MODIFIED/STALE/DEGRADED)
+  2  usage error — see the message, it names the correct form
+  3  environment failure (state dir unwritable, or a condition a rerun cannot fix)
+  4  refused or raced (statusline install/rm) — re-run preview -> confirm -> --yes
+
+flag placement:
+  Flags may go anywhere. `blame add --regex PAT --yes` and
+  `blame add PAT --regex --yes` are both accepted.
+"""
+
+
+# argparse's nargs="*" stops consuming positionals the moment an optional
+# appears, so `blame add --regex PATTERN` parses `add` into rest, then drops
+# PATTERN on the floor and dies with "unrecognized arguments: PATTERN" — an
+# error that names the pattern as the problem when the problem is the ordering.
+# Observed live 2026-08-14: an agent hit exactly this, and three of the four
+# orderings it might have guessed do work, so the failure is arbitrary from the
+# caller's side.
+#
+# Intent is unambiguous here — a bare word after a known verb is an argument to
+# that verb, never a flag — so honor it and say so, rather than rejecting.
+# Genuinely unknown FLAGS (leading dash) are still rejected, because guessing
+# what an unrecognized option means is the case where acting could be wrong.
+def _fold_stragglers(parser, args, extras: list[str]) -> None:
+    if not extras:
+        return
+    unknown_flags = [x for x in extras if x.startswith("-")]
+    if unknown_flags or not hasattr(args, "rest"):
+        parser.error(
+            f"unrecognized argument{'s' if len(extras) > 1 else ''}: "
+            f"{' '.join(extras)}\n"
+            f"  If that was meant as a value, put it next to its verb:\n"
+            f"    kittens {args.cmd} add \"<phrase>\" --yes\n"
+            f"  Run `kittens {args.cmd} --help` for the verb list."
+        )
+    args.rest = list(args.rest) + extras
+    print(
+        f"kittens: note — recovered {' '.join(repr(e) for e in extras)} as "
+        f"argument(s) to `{args.cmd} {args.rest[0] if args.rest else ''}`. "
+        f"A flag between two positionals splits them; canonical form is "
+        f"`kittens {args.cmd} <verb> <arg> --flags`.",
+        file=sys.stderr,
+    )
+
+
 def main() -> int:
-    p = argparse.ArgumentParser(prog="kittens", description=__doc__)
+    p = argparse.ArgumentParser(
+        prog="kittens",
+        description=__doc__,
+        epilog=_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("--session", help="session id (else CLAUDE_CODE_SESSION_ID / hook stdin)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -2417,6 +2531,7 @@ def main() -> int:
     s = sub.add_parser("count", help="show the tally")
     s.add_argument("--scope", choices=["session", "all"],
                    help="override the plugin `scope` setting for this call")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
     s.set_defaults(fn=cmd_count)
 
     s = sub.add_parser("toggle", help="on|off|status enforcement for this session")
@@ -2484,7 +2599,8 @@ def main() -> int:
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)
 
-    args = p.parse_args()
+    args, extras = p.parse_known_args()
+    _fold_stragglers(p, args, extras)
     try:
         return args.fn(args)
     except BrokenPipeError:
