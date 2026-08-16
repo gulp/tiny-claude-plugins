@@ -51,10 +51,11 @@ The correct fast probes:
 
 ## Before you diagnose: are you the load?
 
-A concurrent per-agent fan-out wedges this daemon. Measured 2026-08-16: a sweep
-of 70 agents' inboxes 8-at-a-time drove `/healthz` from 0.03s to 8s timeouts
-within seconds, and **stopping the load recovered it in under 30s with no
-restart.** So stop your own sweeps and pollers (including any browser tab whose
+A per-agent inbox sweep wedges this daemon. Measured 2026-08-16: 70 agents swept
+**8-at-a-time** drove `/healthz` from 0.03s to 8s timeouts within seconds, and
+**stopping the load recovered it in under 30s with no restart.** Note it is not
+connection exhaustion — the pool is `clamp(cpus*12, 50, 200)` (144 on a 12-CPU
+box), so eight in flight is nothing; the cost is per-call work at scale. So stop your own sweeps and pollers (including any browser tab whose
 UI polls a health endpoint), wait passively, and only then run this skill. A
 restart of a shared service that was about to recover costs every other session
 on the box its in-flight work.
