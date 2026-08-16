@@ -45,6 +45,26 @@ The correct fast probes:
 | `am robot inbox --agent <name> --unread` | **~0.15s** | **local-DB read** — returns even under WAL contention |
 | `systemctl --user status <unit>` | instant | **authoritative** — managed? active? Main PID? (beats `ss`/`pgrep`, which can't tell managed-from-orphan) |
 | `am status` / `am robot status` | **1.3–15.8s** | ❌ dashboard, **not** a liveness probe |
+| `curl --max-time 5 http://127.0.0.1:8765/healthz` → header `x-agent-mail-health: 1` | **0.03–0.2s** | **HTTP liveness**, equivalent to `/mcp/` and self-labelling |
+| `curl … /health` | 0.14s warm, **8s+ for minutes after contention** | ❌ *readiness* — does full project + message counts |
+| `curl … /mail/health` | — | ❌ **always 404**; `/mail/<X>` routes as *project* `X` |
+
+## Before you diagnose: are you the load?
+
+A concurrent per-agent fan-out wedges this daemon. Measured 2026-08-16: a sweep
+of 70 agents' inboxes 8-at-a-time drove `/healthz` from 0.03s to 8s timeouts
+within seconds, and **stopping the load recovered it in under 30s with no
+restart.** So stop your own sweeps and pollers (including any browser tab whose
+UI polls a health endpoint), wait passively, and only then run this skill. A
+restart of a shared service that was about to recover costs every other session
+on the box its in-flight work.
+
+Two corollaries worth carrying: a **404 is not a wedge signal** (a prior session
+watched `/mail/health` 404 for ~40 minutes against an already-recovered server —
+a wedge is `000`/timeout), and a client that gives `/health` the same timeout
+budget as `/healthz` will report `degraded` against a perfectly healthy server.
+Longer write-up, with the client-side design consequence:
+`~/shower-thoughts/agent-mail-web-ui/CLAUDE.md`.
 
 ## Inputs
 - `$unit` (optional): systemd user unit — default `mcp-agent-mail.service`.
