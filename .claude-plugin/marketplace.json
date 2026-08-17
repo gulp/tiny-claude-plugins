@@ -104,6 +104,20 @@
         "prose",
         "usability"
       ]
+    },
+    {
+      "name": "pr-faq",
+      "source": "./plugins/pr-faq",
+      "displayName": "PR/FAQ",
+      "description": "Amazon's Working Backwards: draft the future press release + FAQ before any code, from the customer's point of view, with a real kill criterion — if the customer benefit can't survive being stated plainly on the page, the idea dies there, not softened into something that still ships.",
+      "category": "workflow",
+      "tags": [
+        "working-backwards",
+        "pr-faq",
+        "amazon",
+        "product-strategy",
+        "kill-criterion"
+      ]
     }
   ]
 }

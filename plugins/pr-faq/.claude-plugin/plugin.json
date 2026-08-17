@@ -1,0 +1,11 @@
+{
+  "name": "pr-faq",
+  "version": "0.1.0",
+  "description": "Amazon's Working Backwards: draft the future press release + FAQ before any code, from the customer's point of view, with a real kill criterion — if the customer benefit can't survive being stated plainly on the page, the idea dies there.",
+  "author": {
+    "name": "Yekta Gurel",
+    "email": "me@yektagurel.com"
+  },
+  "license": "MIT",
+  "keywords": ["working-backwards", "pr-faq", "amazon", "product-strategy", "kill-criterion", "narrative"]
+}
